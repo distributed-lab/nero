@@ -1,3 +1,4 @@
+use bitcoin::{opcodes::ClassifyContext, script::Instruction};
 use bitcoin_utils::{comparison::OP_LONGNOTEQUAL, stack_to_script, treepp::*};
 
 use signing::SignedIntermediateState;
@@ -37,7 +38,7 @@ mod tests;
 /// { OP_EQUAL }             // { z[i+1] == fn[i](z[i]) }
 /// { OP_NOT }               // { z[i+1] != fn[i](z[i]) }
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct DisproveScript {
     pub script_witness: Script,
     pub script_pubkey: Script,
@@ -109,6 +110,31 @@ impl DisproveScript {
             script_witness,
             script_pubkey,
         }
+    }
+
+    pub fn witness_elements(&self) -> Vec<Vec<u8>> {
+        let mut elements = Vec::with_capacity(self.script_witness.len());
+
+        for instruction in self.script_witness.instructions() {
+            match instruction.unwrap() {
+                Instruction::PushBytes(bytes) => {
+                    elements.push(bytes.as_bytes().to_vec());
+                }
+                Instruction::Op(opcode) => {
+                    match opcode.classify(ClassifyContext::TapScript) {
+                        bitcoin::opcodes::Class::PushNum(num) => {
+                            let buf = num.to_le_bytes().into_iter().filter(|b| *b != 0).collect();
+                            elements.push(buf);
+                        }
+                        _ => {
+                            unreachable!("script witness shouldn't have opcodes, got {opcode}")
+                        }
+                    };
+                }
+            }
+        }
+
+        elements
     }
 }
 

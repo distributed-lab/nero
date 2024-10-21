@@ -14,3 +14,8 @@ serde_json = "1.0.128"
 serde = "1.0.194"
 tracing.workspace = true
 tracing-subscriber.workspace = true
+hex = "0.4.3"
+
+bitvm2-core.path = "../core"
+bitcoin-splitter.path = "../bitcoin-splitter"
+bitcoin-testscripts.path = "../bitcoin-testscripts"

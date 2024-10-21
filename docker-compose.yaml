@@ -11,7 +11,7 @@ services:
       interval: 2s
     volumes:
       - ./configs/bitcoind.conf:/root/.bitcoin/bitcoin.conf
-      - ./local-volumes/bitcoind:/root/.bitcoin
+      - bitcoind:/root/.bitcoin
     entrypoint:
       - "sh"
       - "-c"

@@ -1,5 +1,11 @@
+use std::{fs, path::Path, str::FromStr as _};
+
 use crate::disprove::{form_disprove_scripts_distorted, DisproveScript};
 
+use bitcoin::{
+    consensus::Encodable as _, hashes::Hash as _, key::Secp256k1, secp256k1::SecretKey, Amount,
+    OutPoint, TxOut, WPubkeyHash,
+};
 use bitcoin_splitter::split::{
     core::SplitType,
     intermediate_state::IntermediateState,
@@ -13,8 +19,12 @@ use bitcoin_testscripts::{
 use bitcoin_utils::stack_to_script;
 use bitcoin_utils::{comparison::OP_LONGEQUALVERIFY, treepp::*};
 use bitcoin_window_mul::{bigint::U508, traits::comparable::Comparable};
+use once_cell::sync::Lazy;
 
-use super::{form_disprove_scripts, signing::SignedIntermediateState};
+use crate::{
+    assert::AssertTransaction, disprove::form_disprove_scripts,
+    disprove::signing::SignedIntermediateState,
+};
 
 #[test]
 pub fn test_stack_sign_and_verify() {
@@ -485,4 +495,88 @@ pub fn test_disprove_script_batch_correctness() {
         let result = execute_script(verify_script);
         assert!(!result.success, "Verification {:?} failed", i + 1);
     }
+}
+
+static SECKEY: Lazy<SecretKey> = Lazy::new(|| {
+    "50c8f972285ad27527d79c80fe4df1b63c1192047713438b45758ea4e110a88b"
+        .parse()
+        .unwrap()
+});
+
+#[test]
+fn test_assert_tx_signing() {
+    let IOPair { input, .. } = U254MulScript::generate_invalid_io_pair();
+
+    let ctx = Secp256k1::new();
+
+    let operator_pubkey = SECKEY.public_key(&ctx);
+    let operator_xonly = operator_pubkey.x_only_public_key().0;
+
+    let assert_tx = AssertTransaction::<
+        { U254MulScript::INPUT_SIZE },
+        { U254MulScript::OUTPUT_SIZE },
+        U254MulScript,
+    >::new(input, operator_xonly, Amount::from_sat(70_000));
+
+    let operator_script_pubkey =
+        Script::new_p2wpkh(&WPubkeyHash::hash(&operator_pubkey.serialize()));
+
+    let utxo = TxOut {
+        value: Amount::from_sat(73_000),
+        script_pubkey: operator_script_pubkey.clone(),
+    };
+
+    let outpoint =
+        OutPoint::from_str("a85d89b4666fed622281d3589474aa1f87971b54bd5d9c1899ed2e8e0447cc06:0")
+            .unwrap();
+
+    let tx = assert_tx
+        .clone()
+        .spend_p2wpkh_input_tx(&ctx, &SECKEY, utxo, outpoint)
+        .unwrap();
+
+    let txid = tx.compute_txid();
+    println!("Assert:");
+    dump_hex_tx_to_file(tx, "assert.hex");
+
+    let payout = assert_tx
+        .clone()
+        .payout_transaction(
+            &ctx,
+            TxOut {
+                value: Amount::from_sat(69_000),
+                script_pubkey: operator_script_pubkey.clone(),
+            },
+            txid,
+            &SECKEY,
+        )
+        .unwrap();
+    println!("Payout:");
+    dump_hex_tx_to_file(payout, "payout.hex");
+
+    let disprove_txs = assert_tx
+        .clone()
+        .disprove_transactions(
+            &ctx,
+            TxOut {
+                value: Amount::from_sat(69_000),
+                script_pubkey: operator_script_pubkey,
+            },
+            txid,
+        )
+        .unwrap();
+
+    println!("Number of disprove scripts: {}", disprove_txs.len());
+    for (idx, (_script, tx)) in disprove_txs.into_iter().enumerate() {
+        println!("Disprove{idx}:");
+        dump_hex_tx_to_file(tx, format!("disprove_{}.hex", idx));
+    }
+}
+
+fn dump_hex_tx_to_file(tx: bitcoin::Transaction, path: impl AsRef<Path>) {
+    let mut buf = Vec::new();
+    tx.consensus_encode(&mut buf).unwrap();
+    println!("Length: {}", buf.len());
+    let encoded = hex::encode(&buf);
+    fs::write(path, encoded).unwrap();
 }
