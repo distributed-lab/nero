@@ -1,9 +1,11 @@
 use crate::treepp::*;
 
-/// Asserts that two elements, consisting of multiple limbs, are equal.
+/// Checks whether two elements, consisting of multiple limbs, are equal.
 ///
 /// - **Input:** `{ a[0], a[1], ..., a[l-1], b[0], b[1], ..., b[l-1] }`
-/// - **Returns:** `{ a[0] == b[0] && a[1] == b[1] && ... && a[l-1] == b[l-1] }`
+/// - **Returns:** A single bit equal `a[0]==b[0] && a[1]==b[1] && ... && a[l-1]==b[l-1]`
+///
+/// If `length = 0`, we assume that two elements are equal
 #[allow(non_snake_case)]
 pub fn OP_LONGEQUAL(length: usize) -> Script {
     if length == 0 {
@@ -26,11 +28,14 @@ pub fn OP_LONGEQUAL(length: usize) -> Script {
 /// Asserts that two elements, consisting of multiple limbs, are equal.
 ///
 /// - **Input:** `{ a[0], a[1], ..., a[l-1], b[0], b[1], ..., b[l-1] }`
-/// - **Returns:** `{ a[0] == b[0] && a[1] == b[1] && ... && a[l-1] == b[l-1] }`
+/// - **Returns:** Panics if the condition
+///   `{ a[0] == b[0] && a[1] == b[1] && ... && a[l-1] == b[l-1] }` does not hold.
+///
+/// In case `length = 0`, we assume that two elements are equal and therefore do nothing.
 #[allow(non_snake_case)]
 pub fn OP_LONGEQUALVERIFY(length: usize) -> Script {
     if length == 0 {
-        return script! { OP_RETURN };
+        return script! {};
     }
 
     script! {
@@ -44,6 +49,8 @@ pub fn OP_LONGEQUALVERIFY(length: usize) -> Script {
 ///
 /// - **Input:** `{ a[0], a[1], ..., a[l-1], b[0], b[1], ..., b[l-1] }`
 /// - **Returns:** `{ a[0] != b[0] || a[1] != b[1] || ... || a[l-1] != b[l-1] }`
+///
+/// If `length = 0`, we assume two elements to be equal and thus we return the `0` bit.
 #[allow(non_snake_case)]
 pub fn OP_LONGNOTEQUAL(length: usize) -> Script {
     if length == 0 {
@@ -69,6 +76,8 @@ pub fn OP_LONGNOTEQUAL(length: usize) -> Script {
 ///
 /// - **Input:** `{ a[0], a[1], ..., a[l-1], b[0], b[1], ..., b[l-1] }`
 /// - **Returns:** `{ a[0] != b[0] || a[1] != b[1] || ... || a[l-1] != b[l-1] }`
+///
+/// If `length = 0`, we assume two elements are not equal and thus panic.
 #[allow(non_snake_case)]
 pub fn OP_LONGNOTEQUALVERIFY(length: usize) -> Script {
     script! {
