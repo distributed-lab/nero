@@ -279,7 +279,6 @@ fn test_square_fibonachi() -> eyre::Result<()> {
 }
 
 #[test]
-#[ignore = "Stack size limit exceeded"]
 fn test_u32mul_disprove() -> eyre::Result<()> {
     color_eyre::install()?;
     tracing_subscriber::fmt().init();
