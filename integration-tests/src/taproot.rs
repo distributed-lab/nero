@@ -168,7 +168,7 @@ where
             value: Amount::from_sat(69_000),
             script_pubkey: funding_txout.script_pubkey,
         },
-        atx.compute_txid(),
+        OutPoint::new(atx.compute_txid(), 0),
         &OPERATOR_SECKEY,
     )?;
 
@@ -223,7 +223,7 @@ where
             value: Amount::from_sat(9_000),
             script_pubkey: funding_txout.script_pubkey,
         },
-        atx.compute_txid(),
+        OutPoint::new(atx.compute_txid(), 0),
     )?;
 
     let disprove_tx = disprove_txs
