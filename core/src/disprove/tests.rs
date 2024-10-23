@@ -446,11 +446,8 @@ pub fn test_distorted_disprove_script_fibonacci_sequence() {
     let IOPair { input, output: _ } = FibonacciScript::generate_valid_io_pair();
 
     // Splitting the script into shards
-    let (disprove_scripts, distorted_id) = form_disprove_scripts_distorted::<
-        { FibonacciScript::INPUT_SIZE },
-        { FibonacciScript::OUTPUT_SIZE },
-        FibonacciScript,
-    >(input.clone());
+    let (disprove_scripts, distorted_id) =
+        form_disprove_scripts_distorted::<FibonacciScript>(input.clone());
 
     println!("Distorted ID: {:?}", distorted_id);
 
@@ -478,11 +475,7 @@ pub fn test_disprove_script_batch_correctness() {
     let IOPair { input, output: _ } = U254MulScript::generate_valid_io_pair();
 
     // Splitting the script into shards
-    let disprove_scripts = form_disprove_scripts::<
-        { U254MulScript::INPUT_SIZE },
-        { U254MulScript::OUTPUT_SIZE },
-        U254MulScript,
-    >(input.clone());
+    let disprove_scripts = form_disprove_scripts::<U254MulScript>(input.clone());
 
     // Now, we form the disprove script for each shard
     for (i, disprove_script) in disprove_scripts.into_iter().enumerate() {
@@ -512,11 +505,8 @@ fn test_assert_tx_signing() {
     let operator_pubkey = SECKEY.public_key(&ctx);
     let operator_xonly = operator_pubkey.x_only_public_key().0;
 
-    let assert_tx = AssertTransaction::<
-        { U254MulScript::INPUT_SIZE },
-        { U254MulScript::OUTPUT_SIZE },
-        U254MulScript,
-    >::new(input, operator_xonly, Amount::from_sat(70_000));
+    let assert_tx =
+        AssertTransaction::<U254MulScript>::new(input, operator_xonly, Amount::from_sat(70_000));
 
     let operator_script_pubkey =
         Script::new_p2wpkh(&WPubkeyHash::hash(&operator_pubkey.serialize()));

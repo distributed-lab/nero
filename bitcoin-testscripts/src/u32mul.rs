@@ -22,17 +22,17 @@ pub type U64 = NonNativeBigIntImpl<64, 29>;
 /// Script that performs the addition of two 255-bit numbers
 pub struct U32MulScript;
 
-/// Input size is double the number of limbs of U254 since we are multiplying two numbers
-const INPUT_SIZE: usize = 2 * U32::N_LIMBS;
-/// Output size is the number of limbs of U508
-const OUTPUT_SIZE: usize = U64::N_LIMBS;
+impl SplitableScript for U32MulScript {
+    /// Input size is double the number of limbs of U254 since we are multiplying two numbers
+    const INPUT_SIZE: usize = 2 * U32::N_LIMBS;
+    /// Output size is the number of limbs of U508
+    const OUTPUT_SIZE: usize = U64::N_LIMBS;
 
-impl SplitableScript<{ INPUT_SIZE }, { OUTPUT_SIZE }> for U32MulScript {
     fn script() -> Script {
         U32::OP_WIDENINGMUL::<U64>()
     }
 
-    fn generate_valid_io_pair() -> IOPair<{ INPUT_SIZE }, { OUTPUT_SIZE }> {
+    fn generate_valid_io_pair() -> IOPair {
         let mut prng = ChaCha20Rng::seed_from_u64(0);
 
         // Generate two random 254-bit numbers and calculate their sum
@@ -49,7 +49,7 @@ impl SplitableScript<{ INPUT_SIZE }, { OUTPUT_SIZE }> for U32MulScript {
         }
     }
 
-    fn generate_invalid_io_pair() -> IOPair<{ INPUT_SIZE }, { OUTPUT_SIZE }> {
+    fn generate_invalid_io_pair() -> IOPair {
         let mut prng = ChaCha20Rng::seed_from_u64(0);
 
         // Generate two random 254-bit numbers and calculate their sum
@@ -77,7 +77,11 @@ impl SplitableScript<{ INPUT_SIZE }, { OUTPUT_SIZE }> for U32MulScript {
 
 impl U32MulScript {
     /// Splits the script into shards with a given chunk size
-    pub fn split_with_chunk_size(input: Script, split_type: SplitType, chunk_size: usize) -> SplitResult {
+    pub fn split_with_chunk_size(
+        input: Script,
+        split_type: SplitType,
+        chunk_size: usize,
+    ) -> SplitResult {
         Self::split(input, split_type, chunk_size)
     }
 }
@@ -134,7 +138,8 @@ mod tests {
         let IOPair { input, output } = U32MulScript::generate_valid_io_pair();
 
         // Splitting the script into shards
-        let split_result = U32MulScript::split_with_chunk_size(input, SplitType::ByInstructions, SPLIT_SIZE);
+        let split_result =
+            U32MulScript::split_with_chunk_size(input, SplitType::ByInstructions, SPLIT_SIZE);
 
         for shard in split_result.shards.iter() {
             println!("Shard: {:?}", shard.len());
