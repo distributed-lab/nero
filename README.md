@@ -1,7 +1,9 @@
-# <center> Nero: BitVM2 Made Practical </center>
+<div align="center">
+<h1> Nero: BitVM2 Made Practical </h1>
+</div>
 
 <p align="center">
-  <img width="40%" src="./docs/images/icon.png">
+  <img width="25%" src="./docs/images/icon.png">
 </p>
 
 Practical implementation of the BitVM2 protocol by Distributed Lab. You can check the 
