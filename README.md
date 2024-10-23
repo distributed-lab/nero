@@ -10,6 +10,11 @@ Practical implementation of the BitVM2 protocol by Distributed Lab. You can chec
 [original BitVM2 paper](https://bitvm.org/bitvm_bridge.pdf) and
 [our implementation paper](./docs/paper/nero.pdf) for more details).
 
+> [!IMPORTANT]
+>
+> This project is under heavy development and API can drastically vary due to its early development stage.
+> We do not guarantee any backward compatibility until the first release and recommend using it with great caution.
+
 ## :file_folder: Contents
 
 The project contains multiple crates:

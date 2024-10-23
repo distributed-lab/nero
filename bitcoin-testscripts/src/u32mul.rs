@@ -76,7 +76,8 @@ impl SplitableScript<{ INPUT_SIZE }, { OUTPUT_SIZE }> for U32MulScript {
 }
 
 impl U32MulScript {
-    fn split_with_chunk_size(input: Script, split_type: SplitType, chunk_size: usize) -> SplitResult {
+    /// Splits the script into shards with a given chunk size
+    pub fn split_with_chunk_size(input: Script, split_type: SplitType, chunk_size: usize) -> SplitResult {
         Self::split(input, split_type, chunk_size)
     }
 }
