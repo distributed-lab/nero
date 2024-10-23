@@ -12,8 +12,8 @@
 
 ## :white_check_mark: Checklist
 
-- [] PR title corresponds to the body of changes.
-- [] PR has a proper label, assignee, and reviewers.
-- [] Tests that cover the changes are added (if needed).
-- [] Documentation (`README` files, paper) and Code Comments are updated accordingly.
-- [] Code is formatted, all tests pass, and CI shows no errors.
+- [ ] PR title corresponds to the body of changes.
+- [ ] PR has a proper label, assignee, and reviewers.
+- [ ] Tests that cover the changes are added (if needed).
+- [ ] Documentation (`README` files, paper) and Code Comments are updated accordingly.
+- [ ] Code is formatted, all tests pass, and CI shows no errors.
