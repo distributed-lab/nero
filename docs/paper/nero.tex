@@ -371,13 +371,13 @@ store the state. This limitation can be considered strong, but most of
 the math can be implemented through 32-bit stack elements. So lets fix
 $\ell = 32$ --- maximum size of the stack element in bits.
 
-The first observation is that essentially $z_j$ is a collection of $\ell_j$ 32-bit numbers, say, $z_j = (u_{j,1}, u_{j,2}, \dots, u_{j, \ell_j})$ where each $u_{j,k} \in \mathbb{Z}_{2^{\ell}}$. Therefore, one way to implement the message encoding is following:
+The first observation is that essentially $z_j$ is a collection of 32-bit numbers (suppose this collection consists of $n_j$ numbers). Denote this fact by $z_j = (u_{j,1}, u_{j,2}, \dots, u_{j, n_j})$ where each $u_{j,k} \in \mathbb{Z}_{2^{\ell}}$. Therefore, one way to implement the message encoding is following:
 \begin{enumerate}
-  \item Aggregate elements of $z_j$ into a single hash digest $h_j \gets H(u_{j,1} \parallel u_{j,2} \parallel \dots \parallel u_{j,\ell_j})$.
+  \item Aggregate elements of $z_j$ into a single hash digest $h_j \gets H(u_{j,1} \parallel u_{j,2} \parallel \dots \parallel u_{j,n_j})$.
   \item Use dominant free function $P(h_j)$ as described in~\cite{applied-crypto} to get the decomposition.
 \end{enumerate}
 
-However, as of now, the Bitcoin does not have the \texttt{OP\_CAT}, so there is no way we can effectively aggregate the intermediate state $z_j$ into a single stack element. Meaning, we need to create a Winternitz keypair $(\mathsf{pk}_{j,k}, \mathsf{sk}_{j,k})$ for each $u_{j,k}$ where $k \in \{1,\dots,\ell_j\}$. 
+However, as of now, the Bitcoin does not have the \texttt{OP\_CAT}, so there is no way we can effectively aggregate the intermediate state $z_j$ into a single stack element. Meaning, we need to create a Winternitz keypair $(\mathsf{pk}_{j,k}, \mathsf{sk}_{j,k})$ for each $u_{j,k}$ where $k \in \{1,\dots,n_j\}$. 
 
 However, there are couple of tricks to make the life easier. First, obviously, it is convenient to 
 choose $d$ such that $d+1=2^w$ for some $w \in \mathbb{N}$. This splits the signed message $m$ 
@@ -449,8 +449,8 @@ like this:
 So overall, the algorithm to sign the states looks as follows:
 \begin{enumerate}
   \item The prover $\mathcal{P}$ runs the program on all shards $\{f_j\}_{1 \leq j \leq n}$ to obtain the intermediate states $\{z_j\}_{0 \leq j \leq n}$: essentially, being the stack after executing \script{\elem{z_{j-1}} \elem{f_j}}.
-  \item $\mathcal{P}$ interprets each $z_j$ as a collection of $\ell_j$ 32-bit numbers: $z_j = (u_{j,1}, u_{j,2}, \dots, u_{j, \ell_j})$.
-  \item $\mathcal{P}$ encodes each $u_{j,k}$ and forms the Winternitz keypairs $\{(\mathsf{pk}_{j,k},\mathsf{sk}_{j,k})\}_{1 \leq k \leq \ell_j}$.
+  \item $\mathcal{P}$ interprets each $z_j$ as a collection of $n_j$ 32-bit numbers: $z_j = (u_{j,1}, u_{j,2}, \dots, u_{j, n_j})$.
+  \item $\mathcal{P}$ encodes each $u_{j,k}$ and forms the Winternitz keypairs $\{(\mathsf{pk}_{j,k},\mathsf{sk}_{j,k})\}_{1 \leq k \leq n_j}$.
   \item Verifier $\mathcal{V}$, when publishing the \texttt{DisproveScript[\text{$j$}]}, will add the corresponding \textbf{encoded} states $\mathsf{Enc}(z_j)$, $\mathsf{Enc}(z_{j-1})$, and corresponding signatures $\sigma_j$ and $\sigma_{j-1}$. 
   \item The script, in turn, besides the verification of the intermediate states signatures, will \textbf{recover} the original $u_{j,k}$ elements from the encoded states and verify the equality $f_j(z_{j-1}) = z_j$ after recovery of both $z_j$ and $z_{j-1}$.
 \end{enumerate}
@@ -497,8 +497,7 @@ for d in ds:
   \centering
   \begin{tabular}{ccccc}
     \toprule
-    $d$ & Public Key Size & Verification Script Size & Recovery
-    Script Size & Total \\
+    $d$ & \textbf{Public Key Size} & \textbf{Verification Script Size} & \textbf{Recovery Script Size} & \textbf{Total} \\
     \midrule
     3 & 400 & 120 & 240 & 760 \\
     7 & 280 & 196 & 165 & 641 \\
@@ -583,7 +582,6 @@ this tree can be seen in the \Cref{fig:assert-tx-mast-tree}.
   address with three sub-programs and two intermediate states. Here, $G$ is the generator point of the elliptic curve.}
 \end{figure}
 
-
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=.9\linewidth]{../images/bitvm-txs.png}
@@ -649,7 +647,7 @@ The total size of the script turns out to be roughly \textbf{4450 bytes} (4450B)
   \centering
   \begin{tabular}{cccc}
     \toprule
-    Shard number & Shard Size & \# Elements in state & Estimated Commitment Cost \\
+    \textbf{Shard number} & \textbf{Shard Size} & \textbf{\# Elements in state} & \textbf{Estimated Commitment Cost} \\
     \midrule
     1 & 623B & 37 & 37kB \\
     2 & 640B & 32 & 32kB \\
@@ -670,7 +668,7 @@ Notice an interesting fact: the cost of a single commitment exceeds the cost of 
 
 This leads us to the question: can we throw BitVM2 out of the window due to such inefficiency and wait for the \texttt{OP\_CAT}? The answer is obviously no (for what other reason are we writing this paper?). We can still use BitVM2, but we need to change the way we write the programs. We call such programs \textbf{BitVM-friendly functions}. We provide the first example below.
 
-\subsection{Square Fibonacci Sequnce}
+\subsection{Square Fibonacci Sequence}
 Let us consider a toy example of the Square Fibonacci Sequence. Suppose our input is a pair of elements $(x_0,x_1)$ from the field $\mathbb{F}_q$. For the sake of convenience, we choose $\mathbb{F}_q$ to be the prime field of BN254 curve, which is frequently used for zk-SNARKs. Then, our program $f_n$ consists in finding the $(n-1)^{\text{th}}$ element in the sequence:
 \begin{equation*}
   x_{j+2} = x_{j+1}^2 + x_j^2, \; \text{over $\mathbb{F}_q$.}
@@ -715,7 +713,7 @@ All in all, we believe that, currently, in order to make BitVM2 practical, the w
     \item The intermediate states $\{z_j\}_{0 \leq j \leq n}$ contain a small number of elements, making the commitment cheap enough.
   \end{itemize}
 
-  This way, the worst-case disprove script would cost $\max_{1 \leq j \leq n}\left(|f_j| + \alpha(|z_j| + |z_{j-1}|)\right)$ for $\alpha \approx 1000$\footnote{This constant, after further optimizations, is subject to change}. Note that the number of shards almost does not influence the cost since building the larger tree is typically not a problem.
+  This way, the worst-case disprove script would cost $\max_{1 \leq j \leq n}\left(|f_j| + \alpha(|z_j| + |z_{j-1}|)\right)$ for $\alpha \approx 1000$\footnote{This constant, after further optimizations, is subject to change.}. Note that the number of shards almost does not influence the cost since building the larger tree is typically not a problem.
 \end{definition}
 
 It is a question, though, whether such BitVM-friendly function exists for all the Groth16 ingredients. However, we believe that many functions can be rewritten in such a way. Take, for example, the big integer multiplication. A great cost of such method is storing the bit decomposition of the number. So, if we have an $N$-bit integer, the cost of storing the decomposition is roughly $\alpha N$ (currently, this corresponds to $N \, \text{kB}$). Well, that is a lot, especially for 254-bit long integers, which are currently used in the Groth16 verifier. Moreover, there is no efficient way to split the program to avoid storing the decomposition: you initialize the table at the very beginning and drop at the very end.
