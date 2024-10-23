@@ -145,7 +145,7 @@ bitcoin-cli generatetoaddress 2017 $ADDRESS &> /dev/null
 And then spend it:
 
 ```shell
-nero-cli --config ./nero.toml spend-payout --assert a35153ff68d3fce1fd1f270c4a3a3ef1f1fb1703055c03f6b5b1fef9d08f50ee:0 --seckey Abffe139daab7e63742643886728755f08288f5d05fb6a0aebc3f3ff41d1d83c
+nero-cli --config ./nero.toml spend-payout --assert a35153ff68d3fce1fd1f270c4a3a3ef1f1fb1703055c03f6b5b1fef9d08f50ee:0 --seckey Abffe139daab7e63742643886728755f08288f5d05fb6a0aebc3f3ff41d1d83c --address $ADDRESS
 ```
 
 Output:
@@ -157,7 +157,7 @@ Output:
 ### Disprove spending
 
 ```shell
-nero-cli --config ./nero.toml assert-tx --input ./input.txt --amount 0.007BTC --pubkey dedae18ba57d264289ae13f9009ba4ff62d006d8a64078724a5f153c8f7cca71 --distort
+nero-cli --config ./nero.toml assert-tx --input ./input.txt --amount 0.007BTC --pubkey dedae18ba57d264289ae13f9009ba4ff62d006d8a64078724a5f153c8f7cca71 --address $ADDRESS --distort
 ```
 
 Output:
