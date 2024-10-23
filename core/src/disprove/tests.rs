@@ -547,7 +547,7 @@ fn test_assert_tx_signing() {
                 value: Amount::from_sat(69_000),
                 script_pubkey: operator_script_pubkey.clone(),
             },
-            txid,
+            OutPoint::new(txid, 0),
             &SECKEY,
         )
         .unwrap();
@@ -562,7 +562,7 @@ fn test_assert_tx_signing() {
                 value: Amount::from_sat(69_000),
                 script_pubkey: operator_script_pubkey,
             },
-            txid,
+            OutPoint::new(txid, 0),
         )
         .unwrap();
 

@@ -11,7 +11,7 @@ bitcoin-scriptexec   = { path = "../bitcoin-scriptexec" }
 bitcoin-script-stack = { git = "https://github.com/FairgateLabs/rust-bitcoin-script-stack"}
 
 # BitVM scripts
-bitcoin-window-mul  = { git = "https://github.com/distributed-lab/bitcoin-window-mul.git" }
+bitcoin-window-mul.workspace = true
 bitcoin-winternitz  = { path = "../bitcoin-winternitz" }
 bitcoin-splitter    = { path = "../bitcoin-splitter" }
 bitcoin-testscripts = { path = "../bitcoin-testscripts" }

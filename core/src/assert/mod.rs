@@ -11,7 +11,7 @@ use bitcoin::{
     taproot::{LeafVersion, TaprootBuilder, TaprootSpendInfo},
     transaction::Version,
     Amount, EcdsaSighashType, OutPoint, Psbt, Sequence, TapSighashType, Transaction, TxIn, TxOut,
-    Txid, Witness, XOnlyPublicKey,
+    Witness, XOnlyPublicKey,
 };
 use bitcoin_splitter::split::script::SplitableScript;
 
@@ -28,9 +28,6 @@ const DISPROVE_SCRIPT_WEIGHT: u32 = 1;
 const PAYOUT_SCRIPT_WEIGHT: u32 = 5;
 
 pub struct AssertTransaction<const I: usize, const O: usize, S: SplitableScript<I, O>> {
-    /// Input of the program.
-    pub input: Script,
-
     /// Operator's public key.
     pub operator_pubkey: XOnlyPublicKey,
 
@@ -49,7 +46,6 @@ impl<const I: usize, const O: usize, S: SplitableScript<I, O>> Clone
 {
     fn clone(&self) -> Self {
         Self {
-            input: self.input.clone(),
             operator_pubkey: self.operator_pubkey,
             amount: self.amount,
             disprove_scripts: self.disprove_scripts.clone(),
@@ -72,6 +68,21 @@ impl Default for Options {
 }
 
 impl<const I: usize, const O: usize, S: SplitableScript<I, O>> AssertTransaction<I, O, S> {
+    pub fn from_scripts(
+        operator_pubkey: XOnlyPublicKey,
+        payout: PayoutScript,
+        disprove_scripts: Vec<DisproveScript>,
+        amount: Amount,
+    ) -> Self {
+        Self {
+            operator_pubkey,
+            amount,
+            disprove_scripts,
+            payout_script: payout,
+            __program: PhantomData,
+        }
+    }
+
     /// Construct new Assert transaction.
     pub fn new(input: Script, operator_pubkey: XOnlyPublicKey, amount: Amount) -> Self {
         Self::with_options(input, operator_pubkey, amount, Default::default())
@@ -86,7 +97,6 @@ impl<const I: usize, const O: usize, S: SplitableScript<I, O>> AssertTransaction
         let disprove_scripts = form_disprove_scripts::<I, O, S>(input.clone());
         let payout_script = PayoutScript::with_locktime(operator_pubkey, options.payout_locktime);
         Self {
-            input,
             operator_pubkey,
             amount,
             disprove_scripts,
@@ -105,7 +115,6 @@ impl<const I: usize, const O: usize, S: SplitableScript<I, O>> AssertTransaction
         let payout_script = PayoutScript::with_locktime(operator_pubkey, options.payout_locktime);
         (
             Self {
-                input,
                 operator_pubkey,
                 amount,
                 disprove_scripts,
@@ -132,8 +141,9 @@ impl<const I: usize, const O: usize, S: SplitableScript<I, O>> AssertTransaction
             .expect("witness and script_sigs are not filled, so this should never panic")
     }
 
-    pub fn txout(self, ctx: &Secp256k1<All>) -> TxOut {
-        let taptree = self.form_taptree(ctx);
+    pub fn txout(&self, ctx: &Secp256k1<All>) -> TxOut {
+        let taptree =
+            Self::form_taptree(ctx, self.payout_script.to_script(), &self.disprove_scripts);
 
         self.assert_taproot_output(&taptree)
     }
@@ -147,14 +157,16 @@ impl<const I: usize, const O: usize, S: SplitableScript<I, O>> AssertTransaction
         }
     }
 
-    fn form_taptree(&self, ctx: &Secp256k1<All>) -> TaprootSpendInfo {
-        let scripts_with_weights =
-            iter::once((PAYOUT_SCRIPT_WEIGHT, self.payout_script.clone().to_script())).chain(
-                self.disprove_scripts
-                    .clone()
-                    .into_iter()
-                    .map(|script| (DISPROVE_SCRIPT_WEIGHT, script.script_pubkey)),
-            );
+    pub fn form_taptree(
+        ctx: &Secp256k1<All>,
+        payout_script: Script,
+        disprove_scripts: &[DisproveScript],
+    ) -> TaprootSpendInfo {
+        let scripts_with_weights = iter::once((PAYOUT_SCRIPT_WEIGHT, payout_script)).chain(
+            disprove_scripts
+                .iter()
+                .map(|script| (DISPROVE_SCRIPT_WEIGHT, script.script_pubkey.clone())),
+        );
 
         TaprootBuilder::with_huffman_tree(scripts_with_weights)
             .expect("Weights are low, and number of scripts shoudn't create the tree greater than 128 in depth (I believe)")
@@ -168,10 +180,11 @@ impl<const I: usize, const O: usize, S: SplitableScript<I, O>> AssertTransaction
         &self,
         ctx: &Secp256k1<All>,
         txout: TxOut,
-        txid: Txid,
+        prev_out: OutPoint,
         operator_seckey: &SecretKey,
     ) -> eyre::Result<Transaction> {
-        let taptree = self.form_taptree(ctx);
+        let taptree =
+            Self::form_taptree(ctx, self.payout_script.to_script(), &self.disprove_scripts);
 
         let script = self.payout_script.to_script();
 
@@ -179,7 +192,7 @@ impl<const I: usize, const O: usize, S: SplitableScript<I, O>> AssertTransaction
             version: Version::TWO,
             lock_time: LockTime::ZERO,
             input: vec![TxIn {
-                previous_output: OutPoint::new(txid, 0),
+                previous_output: prev_out,
                 script_sig: Script::new(),
                 sequence: Sequence::from_height(self.payout_script.locktime.value()),
                 witness: Witness::new(),
@@ -223,12 +236,30 @@ impl<const I: usize, const O: usize, S: SplitableScript<I, O>> AssertTransaction
         &self,
         ctx: &Secp256k1<All>,
         txout: TxOut,
-        txid: Txid,
+        prev_out: OutPoint,
     ) -> eyre::Result<HashMap<DisproveScript, Transaction>> {
-        let taptree = self.form_taptree(ctx);
-        let mut map = HashMap::with_capacity(self.disprove_scripts.len());
+        Self::form_disprove_transactions(
+            self.payout_script.to_script(),
+            &self.disprove_scripts,
+            ctx,
+            txout,
+            prev_out,
+        )
+    }
 
-        for disprove in &self.disprove_scripts {
+    /// Create Disprove transaction which spends first output of Assert
+    /// transaction using Payout script path.
+    pub fn form_disprove_transactions(
+        payout_script: Script,
+        disprove_scripts: &[DisproveScript],
+        ctx: &Secp256k1<All>,
+        txout: TxOut,
+        prev_out: OutPoint,
+    ) -> eyre::Result<HashMap<DisproveScript, Transaction>> {
+        let taptree = Self::form_taptree(ctx, payout_script, disprove_scripts);
+        let mut map = HashMap::with_capacity(disprove_scripts.len());
+
+        for disprove in disprove_scripts {
             let script = disprove.script_pubkey.clone();
             let mut witness = Witness::new();
 
@@ -247,7 +278,7 @@ impl<const I: usize, const O: usize, S: SplitableScript<I, O>> AssertTransaction
                 version: Version::ONE,
                 lock_time: LockTime::ZERO,
                 input: vec![TxIn {
-                    previous_output: OutPoint::new(txid, 0),
+                    previous_output: prev_out,
                     script_sig: Script::new(),
                     sequence: Sequence::ZERO,
                     witness,
