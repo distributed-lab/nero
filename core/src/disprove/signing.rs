@@ -73,12 +73,12 @@ pub struct SignedIntermediateState {
 }
 
 impl SignedIntermediateState {
-    /// Creates a new [`IntermediateStateHolder`] from the given intermediate state
+    /// Creates a new [`SignedIntermediateState`] from the given intermediate state
     pub fn sign(state: &IntermediateState) -> Self {
         Self::sign_fn(state, SignedStackElement::sign)
     }
 
-    /// Creates a new [`IntermediateStateHolder`] from the given intermediate state
+    /// Creates a new [`SignedIntermediateState`] from the given intermediate state
     pub fn sign_with_seed<Seed, Rng>(state: &IntermediateState, seed: Seed) -> Self
     where
         Seed: Sized + Default + AsMut<[u8]> + Copy,
@@ -89,7 +89,7 @@ impl SignedIntermediateState {
         })
     }
 
-    /// Creates a new [`IntermediateStateHolder`] based on the signing function provided.
+    /// Creates a new [`SignedIntermediateState`] based on the signing function provided.
     ///
     /// The function takes the mainstack and altstack, converts them to the array of
     /// `u32` elements and applies the signing function to each element.

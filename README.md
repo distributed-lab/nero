@@ -23,7 +23,7 @@ The project contains multiple crates:
 | --- | --- |
 | [`bitcoin-splitter`](bitcoin-splitter/README.md) | A crate for splitting the Bitcoin script into multiple parts as suggested by the recent [^1]). |
 | [`bitcoin-winternitz`](bitcoin-winternitz) | Winternitz Signature and recovery implementation based on BitVM's [`[signatures]`](https://github.com/BitVM/BitVM/tree/main/src/signatures) package. |
-| [`bitcoin-utils`](bitcoin-utils) | Helper package containing implementation of certain fundamental operations and debugging functions. |
+| [`bitcoin-utils`](bitcoin-utils) | Helper package containing the implementation of certain fundamental operations and debugging functions. |
 | [`bitcoin-testscripts`](bitcoin-testscripts) | A collection of test scripts for testing BitVM2 concept. |
 | [`bitcoin-scriptexec`](bitcoin-scriptexec) | A helper crate for executing Bitcoin scripts. Fork of [BitVM package](https://github.com/BitVM/rust-bitcoin-scriptexec). |
 
@@ -34,7 +34,7 @@ docker compose up -d
 ```
 
 > [!WARNING]
-> Sometimes Docker Compose may fail at step of creating the volumes, the most simple solution is, in regards of failure, just trying starting it again several times until it works.
+> Sometimes Docker Compose may fail at step of creating the volumes, the most simple solution is, in regards to failure, just try starting it again several times until it works.
 
 Let us create a temporary alias for `bitcoin-cli` from the container like this:
 
@@ -49,7 +49,7 @@ bitcoin-cli createwallet "my"
 ```
 
 > [!WARNING]
-> Do not create more than one wallet, otherwise further steps would require
+> Do not create more than one wallet, otherwise, further steps will require
 > a bit of modification.
 
 Generate fresh address and store it to environmental variable:
@@ -65,7 +65,7 @@ bitcoin-cli generatetoaddress 101 $ADDRESS
 ```
 
 > [!NOTE]
-> Rewards for mined locally blocks will go to this address, but, by protocol rules, BTCs are mature only after 100 confirmations, so that's why 101 blocks are mined. You can see other in  `immature` balances fields, after executing next command.
+> Rewards for locally mined blocks will go to this address, but, by protocol rules, BTCs are mature only after 100 confirmations, so that's why 101 blocks are mined. After executing the next command, you can see other in `immature` balance fields.
 >
 > For more info about Bitcoin RPC API see [^2].
 
