@@ -75,7 +75,7 @@ mod tests {
     use bitcoin_splitter::split::core::SplitType;
     use bitcoin_window_mul::traits::comparable::Comparable;
 
-    use bitcoin_utils::stack_to_script;
+    use bitcoin_utils::{comparison::OP_LONGEQUALVERIFY, stack_to_script};
 
     use super::*;
 
@@ -105,12 +105,7 @@ mod tests {
             { output }
 
             // Now, we need to verify that the output is correct.
-            for i in (0..U254AddScript::OUTPUT_SIZE).rev() {
-                // { <a_1> <a_2> ... <a_n> <b_1> <b_2> ... <b_n> } <- we need to push element <a_n> to the top of the stack
-                { i+1 } OP_ROLL
-                OP_EQUALVERIFY
-            }
-
+            { OP_LONGEQUALVERIFY(U254AddScript::OUTPUT_SIZE) }
             OP_TRUE
         };
 

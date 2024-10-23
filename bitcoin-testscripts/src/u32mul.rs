@@ -71,7 +71,14 @@ impl SplitableScript<{ INPUT_SIZE }, { OUTPUT_SIZE }> for U32MulScript {
     }
 
     fn default_split(input: Script, split_type: SplitType) -> SplitResult {
-        Self::split(input, split_type, 300)
+        Self::split(input, split_type, 370)
+    }
+}
+
+impl U32MulScript {
+    /// Splits the script into shards with a given chunk size
+    pub fn split_with_chunk_size(input: Script, split_type: SplitType, chunk_size: usize) -> SplitResult {
+        Self::split(input, split_type, chunk_size)
     }
 }
 
@@ -79,7 +86,7 @@ impl SplitableScript<{ INPUT_SIZE }, { OUTPUT_SIZE }> for U32MulScript {
 mod tests {
     use super::*;
     use bitcoin_splitter::split::core::SplitType;
-    use bitcoin_utils::stack_to_script;
+    use bitcoin_utils::{comparison::OP_LONGEQUALVERIFY, stack_to_script};
     use bitcoin_window_mul::traits::comparable::Comparable;
 
     #[test]
@@ -108,12 +115,7 @@ mod tests {
             { output }
 
             // Now, we need to verify that the output is correct.
-            for i in (0..U32MulScript::OUTPUT_SIZE).rev() {
-                // { <a_1> <a_2> ... <a_n> <b_1> <b_2> ... <b_n> } <- we need to push element <a_n> to the top of the stack
-                { i+1 } OP_ROLL
-                OP_EQUALVERIFY
-            }
-
+            { OP_LONGEQUALVERIFY(U32MulScript::OUTPUT_SIZE) }
             OP_TRUE
         };
 
@@ -123,11 +125,16 @@ mod tests {
 
     #[test]
     fn test_naive_split() {
+        const SPLIT_SIZE: usize = 590;
+
+        // Printing the size of the script
+        println!("Size of the script: {} bytes", U32MulScript::script().len());
+
         // First, we generate the pair of input and output scripts
         let IOPair { input, output } = U32MulScript::generate_valid_io_pair();
 
         // Splitting the script into shards
-        let split_result = U32MulScript::default_split(input, SplitType::ByInstructions);
+        let split_result = U32MulScript::split_with_chunk_size(input, SplitType::ByInstructions, SPLIT_SIZE);
 
         for shard in split_result.shards.iter() {
             println!("Shard: {:?}", shard.len());

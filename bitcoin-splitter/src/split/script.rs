@@ -6,7 +6,7 @@ use super::{
     core::{default_split, fuzzy_split, naive_split, SplitType, STACK_SIZE_INDEX},
     intermediate_state::IntermediateState,
 };
-use bitcoin_utils::treepp::*;
+use bitcoin_utils::{comparison::OP_LONGEQUALVERIFY, stack_to_script, treepp::*};
 
 /// Structure that represents a pair of input and output scripts. Typically, the prover
 /// wants to prove `script(input) == output`
@@ -18,6 +18,7 @@ pub struct IOPair<const INPUT_SIZE: usize, const OUTPUT_SIZE: usize> {
 }
 
 /// Structure that represents the result of splitting a script
+#[derive(Clone)]
 pub struct SplitResult {
     /// Scripts (shards) that constitute the input script
     pub shards: Vec<Script>,
@@ -122,6 +123,29 @@ impl SplitResult {
 
         resultant_complexity
     }
+
+    /// Given the [`SplitResult`], distorts the random intermediate state, making
+    /// two state transitions incorrect. Returns the distorted [`SplitResult`] and
+    /// the index of the distorted shard.
+    ///
+    /// **WARNING**: This function is used for testing purposes only, DO NOT ever try to use it in production code.
+    pub fn distort(&self) -> (Self, usize) {
+        let distorted_shard_id = rand::random::<usize>() % self.shards.len();
+        let current_stack = self.intermediate_states[distorted_shard_id].stack.clone();
+        assert!(!current_stack.is_empty(), "Stack must not be empty");
+        let mut new_split_result = self.clone();
+        new_split_result.intermediate_states[distorted_shard_id].stack = {
+            // Executing a random script and getting the stack
+            let random_state = script! {
+                { stack_to_script(&current_stack) }
+                OP_DROP OP_0 // Changing the last limb to OP_0
+            };
+
+            execute_script(random_state).main_stack
+        };
+
+        (new_split_result, distorted_shard_id)
+    }
 }
 
 /// Trait that any script that can be split should implement
@@ -151,11 +175,7 @@ pub trait SplitableScript<const INPUT_SIZE: usize, const OUTPUT_SIZE: usize> {
             // Now, we need to verify that the output is correct.
             // Since the output is not necessarily a single element, we check
             // elements one by one
-            for i in (0..OUTPUT_SIZE).rev() {
-                // { <a_1> <a_2> ... <a_n> <b_1> <b_2> ... <b_n> } <- we need to push element <a_n> to the top of the stack
-                { i+1 } OP_ROLL
-                OP_EQUALVERIFY
-            }
+            { OP_LONGEQUALVERIFY(OUTPUT_SIZE) }
 
             // If everything was verified correctly, we return true to mark the script as successful
             OP_TRUE

@@ -1,8 +1,19 @@
-<center>
+<div align="center">
 <h1> Nero: BitVM2 Made Practical </h1>
-</center>
+</div>
 
-Practical implementation of the BitVM2 protocol
+<p align="center">
+  <img width="25%" src="./docs/images/icon.png">
+</p>
+
+Practical implementation of the BitVM2 protocol by Distributed Lab. You can check the 
+[original BitVM2 paper](https://bitvm.org/bitvm_bridge.pdf) and
+[our implementation paper](./docs/paper/nero.pdf) for more details).
+
+> [!IMPORTANT]
+>
+> This project is under heavy development and API can drastically vary due to its early development stage.
+> We do not guarantee any backward compatibility until the first release and recommend using it with great caution.
 
 ## :file_folder: Contents
 
@@ -10,11 +21,11 @@ The project contains multiple crates:
 
 | Crate | Description |
 | --- | --- |
-| [bitcoin-splitter](bitcoin-splitter/README.md) | A crate for splitting the Bitcoin script into multiple parts as suggested by the recent [^1]). |
-| [bitcoin-winternitz](bitcoin-winternitz) | Winternitz Signature and recovery implementation based on BitVM's [`[signatures]`](https://github.com/BitVM/BitVM/tree/main/src/signatures) package. |
-| [bitcoin-utils](bitcoin-utils) | Helper package containing implementation of certain fundamental operations and debugging functions. |
-| [bitcoin-testscripts](bitcoin-testscripts) | A collection of test scripts for testing BitVM2 concept. |
-| [bitcoin-scriptexec](bitcoin-scriptexec) | A helper crate for executing Bitcoin scripts. Fork of [BitVM package](https://github.com/BitVM/rust-bitcoin-scriptexec). |
+| [`bitcoin-splitter`](bitcoin-splitter/README.md) | A crate for splitting the Bitcoin script into multiple parts as suggested by the recent [^1]). |
+| [`bitcoin-winternitz`](bitcoin-winternitz) | Winternitz Signature and recovery implementation based on BitVM's [`[signatures]`](https://github.com/BitVM/BitVM/tree/main/src/signatures) package. |
+| [`bitcoin-utils`](bitcoin-utils) | Helper package containing the implementation of certain fundamental operations and debugging functions. |
+| [`bitcoin-testscripts`](bitcoin-testscripts) | A collection of test scripts for testing BitVM2 concept. |
+| [`bitcoin-scriptexec`](bitcoin-scriptexec) | A helper crate for executing Bitcoin scripts. Fork of [BitVM package](https://github.com/BitVM/rust-bitcoin-scriptexec). |
 
 ## Setting up a Local Bitcoin Node
 

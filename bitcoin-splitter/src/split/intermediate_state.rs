@@ -137,7 +137,7 @@ impl IntermediateStateAsBytes {
 
 /// Converts a slice of bytes to a vector of u32 values.
 pub(super) fn bytes_to_u32_array(bytes: &[u8]) -> Vec<u32> {
-    let mut u32_array = Vec::with_capacity((bytes.len() + 3) / 4); // Ceiling division to account for partial chunks.
+    let mut u32_array = Vec::with_capacity(usize::div_ceil(bytes.len(), 4)); // Ceiling division to account for partial chunks.
 
     for chunk in bytes.chunks(4) {
         // Handle chunks with fewer than 4 bytes
