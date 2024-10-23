@@ -31,9 +31,9 @@ impl<const STEPS: usize> SquareFibonacciScript<STEPS> {
         script! {
             { Fq::copy(0) }   // { x, y, y }
             { Fq::square() }  // { x, y, y**2 }
-            { Fq::roll(2) }   // {y, y**2, x}
-            { Fq::square() }  // {y, y**2, x**2}
-            { Fq::add(0, 1) } // {y, y**2 + x**2}
+            { Fq::roll(2) }   // { y, y**2, x }
+            { Fq::square() }  // { y, y**2, x**2 }
+            { Fq::add(0, 1) } // { y, y**2 + x**2 }
         }
     }
 

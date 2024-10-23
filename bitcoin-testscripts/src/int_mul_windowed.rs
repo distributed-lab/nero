@@ -69,7 +69,7 @@ impl SplitableScript<{ INPUT_SIZE }, { OUTPUT_SIZE }> for U254MulScript {
 mod tests {
     use super::*;
     use bitcoin_splitter::split::core::SplitType;
-    use bitcoin_utils::stack_to_script;
+    use bitcoin_utils::{comparison::OP_LONGEQUALVERIFY, stack_to_script};
     use bitcoin_window_mul::traits::comparable::Comparable;
 
     #[test]
@@ -107,12 +107,7 @@ mod tests {
             { output }
 
             // Now, we need to verify that the output is correct.
-            for i in (0..U254MulScript::OUTPUT_SIZE).rev() {
-                // { <a_1> <a_2> ... <a_n> <b_1> <b_2> ... <b_n> } <- we need to push element <a_n> to the top of the stack
-                { i+1 } OP_ROLL
-                OP_EQUALVERIFY
-            }
-
+            { OP_LONGEQUALVERIFY(U254MulScript::OUTPUT_SIZE) }
             OP_TRUE
         };
 
@@ -192,9 +187,7 @@ mod tests {
                 { function }
 
                 // Verifying that the output in mainstack is correct
-                for i in (0..split_result.intermediate_states[i].stack.len()).rev() {
-                    { i+1 } OP_ROLL OP_EQUALVERIFY
-                }
+                { OP_LONGEQUALVERIFY(split_result.intermediate_states[i].stack.len()) }
 
                 // Verifying that the output in altstack is correct
                 // Pushing elements to the mainstack
@@ -203,10 +196,7 @@ mod tests {
                 }
 
                 // Verifying that altstack elements are correct
-                for i in (0..split_result.intermediate_states[i].altstack.len()).rev() {
-                    { i+1 } OP_ROLL OP_EQUALVERIFY
-                }
-
+                { OP_LONGEQUALVERIFY(split_result.intermediate_states[i].altstack.len()) }
                 OP_TRUE
             };
 
@@ -246,9 +236,7 @@ mod tests {
                 { function }
 
                 // Verifying that the output in mainstack is correct
-                for i in (0..split_result.intermediate_states[i].stack.len()).rev() {
-                    { i+1 } OP_ROLL OP_EQUALVERIFY
-                }
+                { OP_LONGEQUALVERIFY(split_result.intermediate_states[i].stack.len()) }
 
                 // Verifying that the output in altstack is correct
                 // Pushing elements to the mainstack
@@ -257,10 +245,7 @@ mod tests {
                 }
 
                 // Verifying that altstack elements are correct
-                for i in (0..split_result.intermediate_states[i].altstack.len()).rev() {
-                    { i+1 } OP_ROLL OP_EQUALVERIFY
-                }
-
+                { OP_LONGEQUALVERIFY(split_result.intermediate_states[i].altstack.len()) }
                 OP_TRUE
             };
 

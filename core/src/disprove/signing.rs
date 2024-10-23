@@ -20,12 +20,30 @@ pub struct SignedStackElement {
 }
 
 impl SignedStackElement {
-    /// Creates a new [`SignedStackElement`] by signing the given stack element
+    /// Creates a new [`SignedStackElement`] by signing the given `u32` stack element
     fn sign(stack_element: u32) -> Self {
-        // Creating a keypair
+        // Initializing a random secret key from the entropy
         // TODO(@ZamDimon): Reconsider rng usage
         let mut rng = SmallRng::from_entropy();
         let secret_key = SecretKey::random(&mut rng);
+
+        Self::sign_with_secret_key(secret_key, stack_element)
+    }
+
+    /// Creates a new [`SignedStackElement`] by signing the given `u32` stack element
+    /// using the `Rng` and `Seed` provided as the generic parameter.
+    pub fn sign_with_seed<Seed, Rng>(stack_element: u32, seed: Seed) -> Self
+    where
+        Seed: Sized + Default + AsMut<[u8]>,
+        Rng: rand::SeedableRng<Seed = Seed> + rand::Rng,
+    {
+        // Initializing a random secret key from the seed
+        let secret_key = SecretKey::from_seed::<Seed, Rng>(seed);
+        Self::sign_with_secret_key(secret_key, stack_element)
+    }
+
+    fn sign_with_secret_key(secret_key: SecretKey, stack_element: u32) -> Self {
+        // Deriving a public key
         let public_key = secret_key.public_key();
 
         // Signing the message
@@ -55,8 +73,30 @@ pub struct SignedIntermediateState {
 }
 
 impl SignedIntermediateState {
-    /// Creates a new IntermediateStateHolder from the given intermediate state
+    /// Creates a new [`SignedIntermediateState`] from the given intermediate state
     pub fn sign(state: &IntermediateState) -> Self {
+        Self::sign_fn(state, SignedStackElement::sign)
+    }
+
+    /// Creates a new [`SignedIntermediateState`] from the given intermediate state
+    pub fn sign_with_seed<Seed, Rng>(state: &IntermediateState, seed: Seed) -> Self
+    where
+        Seed: Sized + Default + AsMut<[u8]> + Copy,
+        Rng: rand::SeedableRng<Seed = Seed> + rand::Rng,
+    {
+        Self::sign_fn(state, |element| {
+            SignedStackElement::sign_with_seed::<Seed, Rng>(element, seed)
+        })
+    }
+
+    /// Creates a new [`SignedIntermediateState`] based on the signing function provided.
+    ///
+    /// The function takes the mainstack and altstack, converts them to the array of
+    /// `u32` elements and applies the signing function to each element.
+    fn sign_fn<F>(state: &IntermediateState, sign_fn: F) -> Self
+    where
+        F: Fn(u32) -> SignedStackElement + Clone,
+    {
         let stack = state.to_bytes().stack_as_u32();
         let altstack = state.to_bytes().altstack_as_u32();
 
@@ -66,8 +106,8 @@ impl SignedIntermediateState {
         }
 
         // Signing each element
-        let stack = stack.into_iter().map(SignedStackElement::sign).collect();
-        let altstack = altstack.into_iter().map(SignedStackElement::sign).collect();
+        let stack = stack.into_iter().map(sign_fn.clone()).collect();
+        let altstack = altstack.into_iter().map(sign_fn).collect();
 
         Self { stack, altstack }
     }

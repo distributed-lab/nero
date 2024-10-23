@@ -112,6 +112,16 @@ pub fn OP_256MUL() -> Script {
     }
 }
 
+/// Pushes the element, consisting of `length` limbs
+/// back to the mainstack from the altstack
+pub fn OP_LONGFROMALTSTACK(length: usize) -> Script {
+    script! {
+        for _ in 0..length {
+            OP_FROMALTSTACK
+        }
+    }
+}
+
 pub fn OP_NDUP(n: usize) -> Script {
     let times_3_dup = if n > 3 { (n - 3) / 3 } else { 0 };
     let remaining = if n > 3 { (n - 3) % 3 } else { 0 };
