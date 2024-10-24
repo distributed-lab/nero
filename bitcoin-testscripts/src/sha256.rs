@@ -1,6 +1,5 @@
 //! This module contains the test script
-//! for performing the multiplication of two large integers
-//! (exceeding standard Bitcoin 31-bit integers)
+//! for performing the SHA-256 hash of an input
 
 use crate::bitvm::hash::{sha256::sha256, utils::push_bytes_hex};
 use bitcoin_splitter::split::script::{IOPair, SplitableScript};
