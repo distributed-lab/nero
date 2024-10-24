@@ -29,6 +29,9 @@ impl<const W: usize, const S: usize> SplitableScript for FriendlyU254MulScript<W
             // Convert to w-width form.
             { U254Windowed::OP_TOBEWINDOWEDFORM_TOALTSTACK() }
 
+            // Extend to larger integer
+            { U254Windowed::OP_EXTEND::<U508>() }
+
             // Precomputing {0*z, 1*z, ..., ((1<<WIDTH)-1)*z}
             { WindowedPrecomputeTable::<U508, W, false>::initialize() }
 
@@ -44,7 +47,7 @@ impl<const W: usize, const S: usize> SplitableScript for FriendlyU254MulScript<W
             for _ in 1..U254Windowed::DECOMPOSITION_SIZE {
                 // Double the result WIDTH times
                 for _ in 0..W {
-                    { U508::OP_2MUL(0) }
+                    { U508::OP_2MUL_NOOVERFLOW(0) }
                 }
 
                 // Picking di from the stack
@@ -59,7 +62,7 @@ impl<const W: usize, const S: usize> SplitableScript for FriendlyU254MulScript<W
                 OP_SWAP
                 OP_SUB
                 { U508::OP_PICKSTACK() }
-                { U508::OP_ADD(0, 1) }
+                { U508::OP_ADD_NOOVERFLOW(0, 1) }
             }
 
             // Clearing the precomputed values from the stack.
