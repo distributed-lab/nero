@@ -531,7 +531,7 @@ for d in ds:
 
 As we mentioned in prevoius section, the most contribution to script
 size comes from public key, signature, verification and recovery, but
-do we really need to do that for all of the limbs?
+do we actually need to sign each integer limb?
 
 Let's check the checksum of winternitz singature described
 in~\cite{applied-crypto}:
@@ -540,18 +540,13 @@ in~\cite{applied-crypto}:
   c \gets d n_0 - (e_1 + \ldots + e_{n_0})
 \end{equation}\label{eq:winternitz-checksum}
 
-Assuming that: $d=15$ and $e_{7} = 0$ --- is the last limb of the
-$\mathsf{Enc}(m)$, from~\eqref{eq:winternitz-checksum} the value of
-$e_{7}$ is obviously negliable in the sum of the checksum, so, without
-any security concerns, can be skipped. But to keep the right value
-after a recover, we can't remove all ``zeroed'' limbs. That's why
-instead, we propose \textit{skipping} only the most significant limbs
+Suppose, at some point during the protocol execution with $d=15$, the last limb of the message encoding $\mathsf{Enc}(m)$ turns out to be $e_{7} = 0$. According to \eqref{eq:winternitz-checksum}, the value of
+$e_{7}$ does not contribute to the sum of the checksum, so, without any security concerns, can be omitted. But to keep the right value
+after a recover, we can't remove all zero limbs. That's why
+instead, we propose \textit{skipping} only the most significant \textit{zero} limbs
 of a stack element.
 
-This makes the recovery script size equal to zero in best case
-scenarios, public key's and signature's hashes number from $1 + n_1$
-in best cases to $N$ in worst, and the same applies to verification
-script size too, as less checks required for smaller public key.
+This makes the recovery script size equal to zero in the best-case scenario. The public key and signature hash digest number ranges from $1 + n_1$ in the best case to $N$ in the worst. The same applies to the total verification script size, as fewer checks are required for smaller public keys.
 
 \iffalse{}
 %The python script i used for this table:
