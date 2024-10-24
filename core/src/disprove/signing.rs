@@ -48,7 +48,7 @@ impl SignedStackElement {
 
         // Signing the message
         let message = Message::from_u32(stack_element);
-        let signature = secret_key.sign(&message);
+        let signature = secret_key.sign(message);
 
         Self {
             stack_element,
