@@ -10,7 +10,8 @@ use bitcoin::{
 };
 use bitcoin_splitter::split::script::{IOPair, SplitableScript};
 use bitcoin_testscripts::{
-    int_mul_windowed::U254MulScript, square_fibonacci::SquareFibonacciScript, u32mul::U32MulScript,
+    int_mul_windowed::{U254MulScript, U32MulScript},
+    square_fibonacci::SquareFibonacciScript,
 };
 use bitcoincore_rpc::{
     bitcoin::consensus::{Decodable as _, Encodable as _},
