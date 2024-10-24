@@ -455,19 +455,31 @@ So overall, the algorithm to sign the states looks as follows:
   \item The script, in turn, besides the verification of the intermediate states signatures, will \textbf{recover} the original $u_{j,k}$ elements from the encoded states and verify the equality $f_j(z_{j-1}) = z_j$ after recovery of both $z_j$ and $z_{j-1}$.
 \end{enumerate}
 
-\textbf{Script Size Analysis.} Still, even with optimizations provided, the
-current implementation requires around 1000 bytes per 32-bit stack
-element, which is unfortunatly a lot. Parts of the public key make the
-largest contribution to the script size. Assuming that as $H$
-implementation uses \texttt{OP\_HASH160}, each part $(y_1,\dots,y_N)$
-of the public key $\mathsf{pk}_{m}$ adds 20 bytes to the total script
-size. Additionaly, for calculating a lookup table for signature
-verification, $2d \times N$ opcodes are used. Furthermore, for message
-recovery, $2\sum_{i = 0}^{n_0} i w$ opcodes are added
-too. Also, note that $2 \sum_{i = 0}^{n_0} i w = w n_0 (n_0+1) \approx w n_0^2$, 
-so the total script size, excluding utility opcodes, will be at least roughly
-$20N + 2 dN + w n_0^2$. The sizes for different $d$ can be seen
-in \Cref{tab:winternitz-script-size}.
+\textbf{Script Size Analysis.} Still, even with optimizations
+provided, the current implementation requires around 1000 bytes per
+32-bit stack element, which is unfortunatly a lot. Parts of the public
+key make the largest contribution to the script size. Assuming that as
+$H$ implementation uses \texttt{OP\_HASH160}, each part
+$(y_1,\dots,y_N)$ of the public key $\mathsf{pk}_{m}$ adds 20 bytes to
+the total script size. Additionaly, for calculating a lookup table for
+signature verification, $2d \times N$ opcodes are used. Furthermore, for
+message recovery, $2\sum_{i = 0}^{n_0} i w$ opcodes are added too. Also,
+note that $2 \sum_{i = 0}^{n_0} i w = w n_0 (n_0+1) \approx w n_0^2$, so the
+total script size, excluding utility opcodes, will be at least roughly
+$20N + 2 dN + w n_0^2$.
+
+For script's input stack elements, the size of encoding
+$\mathsf{Enc}(z_j)$ and corresponding signature $\sigma_j$, as each limb
+can be stored only as a whole byte, is around $N + 20N = 21N$
+bytes. So the total size of the largest part of a disprove transaction
+--- \texttt{witness}, is:
+
+\begin{equation*}\label{eq:contrbution-script-size}
+  (41 + 2 d) \cdot N + w (n_0 + 1)n_0
+\end{equation*}
+
+The sizes for different $d$ can be seen in
+\Cref{tab:winternitz-script-size}.
 
 \iffalse{}
 %The python script i used for this table:
@@ -484,32 +496,107 @@ for d in ds:
     
     pk_size = 20 * k
     ver_size = 2 * d * k
+    sig_size = 21*k
     rec_size = 0
     for i in range(0, n0):
         rec_size += int(i * w)
     
-    total = pk_size + ver_size + rec_size
+    total = pk_size + ver_size + rec_size + sig_size
     
-    print(f"{d} & {pk_size} & {ver_size} & {rec_size} & {total} \\\\")
+    print(f"{d} & {sig_size} & {pk_size} & {ver_size} & {rec_size} & {total} \\\\")
 \end{verbatim}
 \fi
 \begin{table}[H]
   \centering
-  \begin{tabular}{ccccc}
+  \begin{tabular}{cccccc}
     \toprule
-    $d$ & \textbf{Public Key Size} & \textbf{Verification Script Size} & \textbf{Recovery Script Size} & \textbf{Total} \\
+    $d$ & \textbf{Signature} & \textbf{Public Key} & \textbf{Verification Script} & \textbf{Recovery Script} & \textbf{Total} \\
     \midrule
-    3 & 400 & 120 & 240 & 760 \\
-    7 & 280 & 196 & 165 & 641 \\
-    15 & 200 & 300 & 112 & 612 \\
-    31 & 180 & 558 & 105 & 843 \\
-    63 & 160 & 1008 & 90 & 1258 \\
-    127 & 140 & 1778 & 70 & 1988 \\
-    255 & 120 & 3060 & 48 & 3228 \\
+    3 & 420 & 400 & 120 & 240 & 1180 \\
+    7 & 294 & 280 & 196 & 165 & 935 \\
+    15 & 210 & 200 & 300 & 112 & 822 \\
+    31 & 189 & 180 & 558 & 105 & 1032 \\
+    63 & 168 & 160 & 1008 & 90 & 1426 \\
+    127 & 147 & 140 & 1778 & 70 & 2135 \\
+    255 & 126 & 120 & 3060 & 48 & 3354 \\
     \bottomrule
   \end{tabular}
-  \caption{Different script sizes depending on the $d$
-  value per each 32-bit message}\label{tab:winternitz-script-size}
+  \caption{Different script sizes depending on the $d$ value per each
+    32-bit message. Note that, ``Signature'' column includes the
+    encoding of 32-bit message in it.}\label{tab:winternitz-script-size}
+\end{table}
+
+\subsubsection{Compact Winternitz commitment
+  scheme in Bitcoin}\label{sec:compact-winternitz-in-bitcoin}
+
+As we mentioned in prevoius section, the most contribution to script
+size comes from public key, signature, verification and recovery, but
+do we really need to do that for all of the limbs?
+
+Let's check the checksum of winternitz singature described
+in~\cite{applied-crypto}:
+
+\begin{equation}
+  c \gets d n_0 - (e_1 + \ldots + e_{n_0})
+\end{equation}\label{eq:winternitz-checksum}
+
+Assuming that: $d=15$ and $e_{7} = 0$ --- is the last limb of the
+$\mathsf{Enc}(m)$, from~\eqref{eq:winternitz-checksum} the value of
+$e_{7}$ is obviously negliable in the sum of the checksum, so, without
+any security concerns, can be skipped. But to keep the right value
+after a recover, we can't remove all ``zeroed'' limbs. That's why
+instead, we propose \textit{skipping} only the most significant limbs
+of a stack element.
+
+This makes the recovery script size equal to zero in best case
+scenarios, public key's and signature's hashes number from $1 + n_1$
+in best cases to $N$ in worst, and the same applies to verification
+script size too, as less checks required for smaller public key.
+
+\iffalse{}
+%The python script i used for this table:
+\begin{verbatim}
+import math
+l = 32
+d = 15
+w = math.ceil(math.log(d+1, 2))
+n0 = math.ceil(l / w)
+n1 = math.ceil((2**w * n0).bit_length() / w)
+
+for z in range(1, 8+1):
+    k = z + n1
+    
+    pk_size = 20 * k
+    ver_size = 2 * d * k
+    sig_size = 21*k
+    rec_size = 0
+    for i in range(0, z):
+        rec_size += int(i * w)
+    
+    total = pk_size + ver_size + rec_size + sig_size
+    
+    print(f"{z} & {sig_size} & {pk_size} & {ver_size} & {rec_size} & {total} \\\\")
+\end{verbatim}
+\fi
+\begin{table}[H]
+  \centering
+  \begin{tabular}{cccccc}
+    \toprule
+    \textbf{Non-zero limbs} & \textbf{Signature} & \textbf{Public Key} & \textbf{Verification} & \textbf{Recovery} & \textbf{Total} \\
+    \midrule
+    1 & 63 & 60 & 90 & 0 & 213 \\
+    2 & 84 & 80 & 120 & 4 & 288 \\
+    3 & 105 & 100 & 150 & 12 & 367 \\
+    4 & 126 & 120 & 180 & 24 & 450 \\
+    5 & 147 & 140 & 210 & 40 & 537 \\
+    6 & 168 & 160 & 240 & 60 & 628 \\
+    7 & 189 & 180 & 270 & 84 & 723 \\
+    8 & 210 & 200 & 300 & 112 & 822 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Different number of possible script sizes for $d = 15$
+    depending on the the number of non-zero
+    limbs.}\label{tab:winternitz-script-size}
 \end{table}
 
 \subsection{Disprove Script Specification}
