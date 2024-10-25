@@ -20,11 +20,6 @@ use rand_chacha::ChaCha20Rng;
 /// `x[n+2] = x[n+1]**2 + x[n]**2`
 pub struct SquareFibonacciScript<const STEPS: usize>;
 
-/// Input size is double the number of limbs of U254 since we are multiplying two numbers
-const INPUT_SIZE: usize = 2 * Fq::N_LIMBS as usize;
-/// Output size is the number of limbs of U508
-const OUTPUT_SIZE: usize = Fq::N_LIMBS as usize;
-
 impl<const STEPS: usize> SquareFibonacciScript<STEPS> {
     /// Given {x, y}, the script translates it to {y, x**2 + y**2}
     pub fn transition_script() -> Script {
@@ -52,9 +47,12 @@ impl<const STEPS: usize> SquareFibonacciScript<STEPS> {
     }
 }
 
-impl<const STEPS: usize> SplitableScript<{ INPUT_SIZE }, { OUTPUT_SIZE }>
-    for SquareFibonacciScript<STEPS>
-{
+impl<const STEPS: usize> SplitableScript for SquareFibonacciScript<STEPS> {
+    /// Input size is double the number of limbs of U254 since we are multiplying two numbers
+    const INPUT_SIZE: usize = 2 * Fq::N_LIMBS as usize;
+    /// Output size is the number of limbs of U508
+    const OUTPUT_SIZE: usize = Fq::N_LIMBS as usize;
+
     fn script() -> Script {
         script! {
             for _ in 0..STEPS {
@@ -65,7 +63,7 @@ impl<const STEPS: usize> SplitableScript<{ INPUT_SIZE }, { OUTPUT_SIZE }>
         }
     }
 
-    fn generate_valid_io_pair() -> IOPair<{ INPUT_SIZE }, { OUTPUT_SIZE }> {
+    fn generate_valid_io_pair() -> IOPair {
         // Generating random Fq elements --- first two elements in the sequence
         let x0 = generate_random_fq();
         let x1 = generate_random_fq();
@@ -82,7 +80,7 @@ impl<const STEPS: usize> SplitableScript<{ INPUT_SIZE }, { OUTPUT_SIZE }>
         }
     }
 
-    fn generate_invalid_io_pair() -> IOPair<{ INPUT_SIZE }, { OUTPUT_SIZE }> {
+    fn generate_invalid_io_pair() -> IOPair {
         // We will simply generate three random values to make the script invalid
         let x0 = generate_random_fq();
         let x1 = generate_random_fq();

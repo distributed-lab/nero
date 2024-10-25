@@ -10,7 +10,8 @@ use bitcoin::{
 };
 use bitcoin_splitter::split::script::{IOPair, SplitableScript};
 use bitcoin_testscripts::{
-    int_mul_windowed::U254MulScript, square_fibonacci::SquareFibonacciScript, u32mul::U32MulScript,
+    int_mul_windowed::{U254MulScript, U32MulScript},
+    square_fibonacci::SquareFibonacciScript,
 };
 use bitcoincore_rpc::{
     bitcoin::consensus::{Decodable as _, Encodable as _},
@@ -63,9 +64,9 @@ struct TestSetup {
     funding_txout: TxOut,
 }
 
-fn setup_test<const I: usize, const O: usize, S>(amount_sats: u64) -> eyre::Result<TestSetup>
+fn setup_test<S>(amount_sats: u64) -> eyre::Result<TestSetup>
 where
-    S: SplitableScript<I, O>,
+    S: SplitableScript,
 {
     let client = init_bitcoin_client()?;
     let address = init_wallet()?;
@@ -125,9 +126,9 @@ where
     })
 }
 
-fn test_script_payout_spending<const I: usize, const O: usize, S>() -> eyre::Result<()>
+fn test_script_payout_spending<S>() -> eyre::Result<()>
 where
-    S: SplitableScript<I, O>,
+    S: SplitableScript,
 {
     let TestSetup {
         ctx,
@@ -138,10 +139,10 @@ where
         funding_txout,
         funder_address,
         ..
-    } = setup_test::<I, O, S>(71_000)?;
+    } = setup_test::<S>(71_000)?;
 
     let operator_xonly = OPERATOR_PUBKEY.x_only_public_key().0;
-    let assert_tx = AssertTransaction::<{ I }, { O }, S>::with_options(
+    let assert_tx = AssertTransaction::<S>::with_options(
         input_script,
         operator_xonly,
         Amount::from_sat(70_000),
@@ -180,9 +181,9 @@ where
     Ok(())
 }
 
-fn test_script_disprove_distorted<const I: usize, const O: usize, S>() -> eyre::Result<()>
+fn test_script_disprove_distorted<S>() -> eyre::Result<()>
 where
-    S: SplitableScript<I, O>,
+    S: SplitableScript,
 {
     let TestSetup {
         ctx,
@@ -193,10 +194,10 @@ where
         funding_txout,
         funder_address,
         ..
-    } = setup_test::<I, O, S>(100_000)?;
+    } = setup_test::<S>(100_000)?;
 
     let operator_xonly = OPERATOR_PUBKEY.x_only_public_key().0;
-    let (assert_tx, distored_idx) = AssertTransaction::<{ I }, { O }, S>::with_options_distorted(
+    let (assert_tx, distored_idx) = AssertTransaction::<S>::with_options_distorted(
         input_script,
         operator_xonly,
         Amount::from_sat(90_000),
@@ -249,33 +250,21 @@ where
 fn test_u254_mul_disprove() -> eyre::Result<()> {
     color_eyre::install()?;
     tracing_subscriber::fmt().init();
-    test_script_disprove_distorted::<
-        { U254MulScript::INPUT_SIZE },
-        { U254MulScript::OUTPUT_SIZE },
-        U254MulScript,
-    >()
+    test_script_disprove_distorted::<U254MulScript>()
 }
 
 #[test]
 fn test_u254_mul_payout() -> eyre::Result<()> {
     color_eyre::install()?;
     tracing_subscriber::fmt().init();
-    test_script_payout_spending::<
-        { U254MulScript::INPUT_SIZE },
-        { U254MulScript::OUTPUT_SIZE },
-        U254MulScript,
-    >()
+    test_script_payout_spending::<U254MulScript>()
 }
 
 #[test]
 fn test_square_fibonachi() -> eyre::Result<()> {
     color_eyre::install()?;
     tracing_subscriber::fmt().init();
-    test_script_disprove_distorted::<
-        { SquareFibonacciScript::<1024>::INPUT_SIZE },
-        { SquareFibonacciScript::<1024>::OUTPUT_SIZE },
-        SquareFibonacciScript<1024>,
-    >()
+    test_script_disprove_distorted::<SquareFibonacciScript<1024>>()
 }
 
 #[test]
@@ -283,9 +272,5 @@ fn test_square_fibonachi() -> eyre::Result<()> {
 fn test_u32mul_disprove() -> eyre::Result<()> {
     color_eyre::install()?;
     tracing_subscriber::fmt().init();
-    test_script_disprove_distorted::<
-        { U32MulScript::INPUT_SIZE },
-        { U32MulScript::OUTPUT_SIZE },
-        U32MulScript,
-    >()
+    test_script_disprove_distorted::<U32MulScript>()
 }

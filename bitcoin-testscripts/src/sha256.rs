@@ -1,6 +1,5 @@
 //! This module contains the test script
-//! for performing the multiplication of two large integers
-//! (exceeding standard Bitcoin 31-bit integers)
+//! for performing the SHA-256 hash of an input
 
 use crate::bitvm::hash::{sha256::sha256, utils::push_bytes_hex};
 use bitcoin_splitter::split::script::{IOPair, SplitableScript};
@@ -12,17 +11,15 @@ use sha2::{Digest, Sha256};
 /// Script that performs the addition of two 254-bit numbers
 pub struct SHA256Script<const INPUT_SIZE: usize>;
 
-/// Output size is 32 bytes (256 bits)
-const OUTPUT_SIZE: usize = 32;
+impl<const INPUT_SIZE: usize> SplitableScript for SHA256Script<INPUT_SIZE> {
+    const INPUT_SIZE: usize = INPUT_SIZE;
+    const OUTPUT_SIZE: usize = 32;
 
-impl<const INPUT_SIZE: usize> SplitableScript<INPUT_SIZE, { OUTPUT_SIZE }>
-    for SHA256Script<INPUT_SIZE>
-{
     fn script() -> Script {
         sha256(INPUT_SIZE)
     }
 
-    fn generate_valid_io_pair() -> IOPair<INPUT_SIZE, { OUTPUT_SIZE }> {
+    fn generate_valid_io_pair() -> IOPair {
         // Generate a random array of bytes
         let mut data = [0; INPUT_SIZE];
         rand::thread_rng().fill_bytes(&mut data);
@@ -43,7 +40,7 @@ impl<const INPUT_SIZE: usize> SplitableScript<INPUT_SIZE, { OUTPUT_SIZE }>
         }
     }
 
-    fn generate_invalid_io_pair() -> IOPair<INPUT_SIZE, { OUTPUT_SIZE }> {
+    fn generate_invalid_io_pair() -> IOPair {
         // Generate a random array of bytes
         let mut data = [0; INPUT_SIZE];
         rand::thread_rng().fill_bytes(&mut data);
