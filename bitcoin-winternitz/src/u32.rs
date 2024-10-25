@@ -77,19 +77,18 @@ impl SecretKey {
     }
 
     /// Generate [`Signature`] from [`Message`].
-    pub fn sign(&self, msg: &Message) -> Signature {
-        let mut buf = [(0u8, Hash160::all_zeros()); N];
+    pub fn sign(&self, msg: Message) -> Signature {
+        let mut buf = [Hash160::all_zeros(); N];
 
         for (idx, (hash, times)) in self.0.iter().zip(msg.0.iter()).enumerate() {
             let mut hash = *hash;
-            let times = *times;
-            for _ in 0..times {
+            for _ in 0..*times {
                 hash = Hash160::hash(hash.to_byte_array().as_slice());
             }
-            buf[idx] = (times, hash);
+            buf[idx] = hash;
         }
 
-        Signature(buf)
+        Signature { sig: buf, msg }
     }
 }
 
@@ -101,7 +100,7 @@ pub struct PublicKey([Hash160; N]);
 impl PublicKey {
     /// Verify signature for given message.    
     pub fn verify(&self, msg: &Message, sig: &Signature) -> bool {
-        for ((pubkey, times), (_, sig)) in self.0.iter().zip(msg.0.iter()).zip(sig.0.iter()) {
+        for ((pubkey, times), sig) in self.0.iter().zip(msg.0.iter()).zip(sig.sig.iter()) {
             let mut hash = *sig;
 
             for _ in 0..(D - *times as usize) {
@@ -114,6 +113,13 @@ impl PublicKey {
         }
 
         true
+    }
+
+    /// Construct `script_pubkey` signature verification which uses compact
+    /// implementation of msg encoding (which skips zero limbs).
+    pub fn checksig_verify_script_compact(&self, msg: &Message) -> Script {
+        let skip = msg.count_zero_limbs_from_left();
+        checksig_verify_script_compact(skip, self)
     }
 }
 
@@ -138,7 +144,7 @@ impl Message {
             let masked = msg & MASK;
             buf[i] = masked as u8;
 
-            msg >>= 4;
+            msg >>= BITS_PER_DIGIT;
             sum += buf[i];
             i += 1;
         }
@@ -184,9 +190,17 @@ impl Message {
     /// and as Bitcoin lacks the `OP_MUL` opcode, we can instead make `OP_DUP`
     /// `OP_ADD` $4i$ times for each part and then sum the results.
     pub fn recovery_script() -> Script {
+        Self::recovery_script_fixed_limbs(N0)
+    }
+
+    fn recovery_script_fixed_limbs(limbs_num: usize) -> Script {
+        if limbs_num == 1 {
+            return script! {};
+        }
+
         script! {
-            for i in 0..N0 {
-                for _ in 0..(4 * i) {
+            for i in 0..limbs_num {
+                for _ in 0..(BITS_PER_DIGIT * i) {
                     OP_DUP
                     OP_ADD
                 }
@@ -196,69 +210,102 @@ impl Message {
                 OP_TOALTSTACK
             }
             OP_FROMALTSTACK
-            for _ in 0..N0-1 {
+            for _ in 0..limbs_num-1 {
                 OP_FROMALTSTACK
                 OP_ADD
             }
         }
     }
+
+    /// The same as [`Self::recovery_script`] but recovers only "used" limbs.
+    ///
+    /// Unused limbs are zero one.
+    pub fn recovery_script_compact(&self) -> Script {
+        let unused = self.count_zero_limbs_from_left();
+
+        Self::recovery_script_fixed_limbs(N0 - unused)
+    }
+
+    /// Returns the number of limbs which are equal to zero from the most
+    /// significant bit excluding, the checksum limbs.
+    ///
+    /// If all limbs are zero, this function returns `N0-1`, thus the keeping
+    /// at least one limb.
+    pub fn count_zero_limbs_from_left(&self) -> usize {
+        self.0
+            .iter()
+            .rev()
+            .skip(N1)
+            .take_while(|limb| **limb == 0)
+            .count()
+            .min(N0 - 1)
+    }
 }
 
 /// Winternitz signature. The array of intermidiate hashes of secret key.
 #[derive(Clone, Copy, Debug)]
-pub struct Signature([(u8, Hash160); N]);
+pub struct Signature {
+    sig: [Hash160; N],
+    msg: Message,
+}
 
 impl Signature {
     /// Creates bitcoin script with pushed to stack pairs of signature and
     /// number of times it was hashed.
-    pub fn to_script_sig(&self) -> Script {
+    pub fn to_script_sig(self) -> Script {
+        self.to_script_sig_skipping(0)
+    }
+
+    /// The same as [`Self::to_script_sig`], but skips `skipping` number of
+    /// limbs and sigs for zero limbs.
+    fn to_script_sig_skipping(self, skipping: usize) -> Script {
         script! {
-            for (times, sig) in self.0.iter().rev() {
+            // Keep all the elements of the checksum.
+            for idx in (N0..(N0 + N1)).rev() {
                 // TODO(Velnbur): we can get rid of additional allocation
                 // here by implemention Pushable for all hash types from
                 // Bitcoin crate. Do that after bitcoin-execscript fork.
-                { sig.to_byte_array().to_vec() }
-                { *times }
+                { self.sig[idx].to_byte_array().to_vec() }
+                { self.msg.0[idx] }
+            }
+            // Push the stack element limbs skipping some of them.
+            for idx in (0..N0).rev().skip(skipping) {
+                { self.sig[idx].to_byte_array().to_vec() }
+                { self.msg.0[idx] }
             }
         }
+    }
+
+    /// The same as [`Self::to_script_sig`], but skips equal to zero limbs
+    /// from the left.
+    pub fn to_script_sig_compact(self) -> Script {
+        let skip = self.msg.count_zero_limbs_from_left();
+        self.to_script_sig_skipping(skip)
     }
 }
 
 /// Returns the script which verifies the Winternitz signature (see
 /// [`Signature`]) from top of the stack.
 pub fn checksig_verify_script(public_key: &PublicKey) -> Script {
+    checksig_verify_script_compact(0, public_key)
+}
+
+/// The same as [`checksig_verify_script`], but checks only
+/// `N0-zero_limbs` of the stack element. Thus shortening the script.
+pub fn checksig_verify_script_compact(zero_limbs: usize, public_key: &PublicKey) -> Script {
     script! {
         //
         // Verify the hash chain for each digit
         //
 
-        // Repeat this for every of the n many digits
-        for digit_index in 0..N {
-            // Verify that the digit is in the range [0, d]
-            // See https://github.com/BitVM/BitVM/issues/35
-            { D }
-            OP_MIN
+        // Repeat this for every of the n0-zero_limbs many digits
+        for digit_index in 0..(N0 - zero_limbs) {
+            { checksig_verify_limb_script(&public_key.0[digit_index]) }
+        }
 
-            // Push two copies of the digit onto the altstack
-            OP_DUP
-            OP_TOALTSTACK
-            OP_TOALTSTACK
-
-            // Hash the input hash d times and put every result on the stack
-            for _ in 0..D {
-                OP_DUP OP_HASH160
-            }
-
-            // Verify the signature for this digit
-            OP_FROMALTSTACK
-            OP_PICK
-            { public_key.0[digit_index].as_byte_array().to_vec() }
-            OP_EQUALVERIFY
-
-            // Drop the d+1 stack items
-            for _ in 0..(D+1)/2 {
-                OP_2DROP
-            }
+        // Repeat this for the checksum
+        for digit_index in N0..(N0+N1) {
+            { checksig_verify_limb_script(&public_key.0[digit_index]) }
         }
 
         //
@@ -277,7 +324,7 @@ pub fn checksig_verify_script(public_key: &PublicKey) -> Script {
 
         // 2. Compute the checksum of the message's digits
         OP_FROMALTSTACK OP_DUP OP_NEGATE
-        for _ in 1..N0 {
+        for _ in 1..(N0 - zero_limbs) {
             OP_FROMALTSTACK OP_TUCK OP_SUB
         }
         { D * N0 }
@@ -285,11 +332,46 @@ pub fn checksig_verify_script(public_key: &PublicKey) -> Script {
 
         // Get result from step 1 by moving it to the top
         // of the stack.
-        { N0 + 1 }
+        { N0 - zero_limbs + 1 }
         OP_ROLL
 
         // 3. Ensure both checksums are equal
         OP_EQUALVERIFY
+    }
+}
+
+/// Script for verifying single part of the signature from top of the
+/// stack.
+///
+/// This script expects the one signature part and limb from top of the
+/// stack.
+fn checksig_verify_limb_script(pubkey: &Hash160) -> Script {
+    script! {
+        // Verify that the digit is in the range [0, d]
+        // See https://github.com/BitVM/BitVM/issues/35
+        { D }
+        OP_MIN
+
+        // Push two copies of the digit onto the altstack
+        OP_DUP
+        OP_TOALTSTACK
+        OP_TOALTSTACK
+
+        // Hash the input hash d times and put every result on the stack
+        for _ in 0..D {
+            OP_DUP OP_HASH160
+        }
+
+        // Verify the signature for this digit
+        OP_FROMALTSTACK
+        OP_PICK
+        { pubkey.as_byte_array().to_vec() }
+        OP_EQUALVERIFY
+
+        // Drop the d+1 stack items
+        for _ in 0..(D+1)/2 {
+            OP_2DROP
+        }
     }
 }
 
@@ -366,6 +448,7 @@ mod tests {
     mod with_rand {
         use quickcheck::{Arbitrary, Gen};
         use quickcheck_macros::quickcheck;
+        use rstest::rstest;
 
         use super::super::*;
 
@@ -379,7 +462,7 @@ mod tests {
 
             let secret_key = SecretKey::from_seed::<_, SmallRng>([1u8; 32]);
             let public_key = secret_key.public_key();
-            let signature = secret_key.sign(&message);
+            let signature = secret_key.sign(message);
 
             assert!(public_key.verify(&message, &signature));
         }
@@ -391,7 +474,7 @@ mod tests {
 
             let secret_key = SecretKey::from_seed::<_, SmallRng>([1u8; 32]);
             let public_key = secret_key.public_key();
-            let signature = secret_key.sign(&msg);
+            let signature = secret_key.sign(msg);
 
             let checksig_script = checksig_verify_script(&public_key);
             println!("ChecksigScript: {}", checksig_script.as_bytes().len());
@@ -404,6 +487,47 @@ mod tests {
                 { checksig_script }
                 { recovery_script }
                 { MSG }
+                OP_EQUAL
+            };
+
+            println!("ScriptPubkey: {}", script_pubkey.as_bytes().len());
+            let script = script! {
+                { script_sig }
+                { script_pubkey }
+            };
+            println!("Script: {}", script.as_bytes().len());
+            let result = execute_script(script);
+            println!("{}", result);
+
+            assert!(result.success);
+        }
+
+        #[rstest]
+        #[case(0x0EEEDDCC)]
+        #[case(0x00EDDCC)]
+        #[case(0x000DDCC)]
+        #[case(0x0000DCC)]
+        #[case(0x00000CC)]
+        #[case(0x000000C)]
+        #[case(0x0000000)]
+        fn test_signature_compact_verification_in_script_works(#[case] msg_raw: u32) {
+            let msg = Message::from_u32(msg_raw);
+
+            let secret_key = SecretKey::from_seed::<_, SmallRng>([1u8; 32]);
+            let public_key = secret_key.public_key();
+            let signature = secret_key.sign(msg);
+
+            let checksig_script = public_key.checksig_verify_script_compact(&msg);
+            println!("ChecksigScript: {}", checksig_script.as_bytes().len());
+            let recovery_script = msg.recovery_script_compact();
+            println!("RecoveryScript: {}", recovery_script.as_bytes().len());
+
+            let script_sig = signature.to_script_sig_compact();
+            println!("ScriptSig: {}", script_sig.as_bytes().len());
+            let script_pubkey = script! {
+                { checksig_script }
+                { recovery_script }
+                { msg_raw }
                 OP_EQUAL
             };
 
@@ -441,7 +565,7 @@ mod tests {
             let secret_key = SecretKey::from_seed::<_, SmallRng>(seed);
             let public_key = secret_key.public_key();
 
-            let signature = secret_key.sign(&message);
+            let signature = secret_key.sign(message);
 
             public_key.verify(&message, &signature)
         }
@@ -454,7 +578,7 @@ mod tests {
 
             let secret_key = SecretKey::from_seed::<_, SmallRng>(seed);
             let public_key = secret_key.public_key();
-            let signature = secret_key.sign(&message);
+            let signature = secret_key.sign(message);
 
             let checksig_script = checksig_verify_script(&public_key);
             let recovery_script = Message::recovery_script();
@@ -471,6 +595,43 @@ mod tests {
                 { script_sig }
                 { script_pubkey }
             };
+            let result = execute_script(script);
+            println!("{}", result);
+
+            result.success
+        }
+
+        #[quickcheck]
+        fn test_signature_compact_verification_in_script_works_any(
+            TestInput { seed, msg }: TestInput,
+        ) -> bool {
+            let msg_raw = msg;
+            let msg = Message::from_u32(msg_raw);
+
+            let secret_key = SecretKey::from_seed::<_, SmallRng>(seed);
+            let public_key = secret_key.public_key();
+            let signature = secret_key.sign(msg);
+
+            let checksig_script = public_key.checksig_verify_script_compact(&msg);
+            println!("ChecksigScript: {}", checksig_script.as_bytes().len());
+            let recovery_script = msg.recovery_script_compact();
+            println!("RecoveryScript: {}", recovery_script.as_bytes().len());
+
+            let script_sig = signature.to_script_sig_compact();
+            println!("ScriptSig: {}", script_sig.as_bytes().len());
+            let script_pubkey = script! {
+                { checksig_script }
+                { recovery_script }
+                { msg_raw }
+                OP_EQUAL
+            };
+
+            println!("ScriptPubkey: {}", script_pubkey.as_bytes().len());
+            let script = script! {
+                { script_sig }
+                { script_pubkey }
+            };
+            println!("Script: {}", script.as_bytes().len());
             let result = execute_script(script);
             println!("{}", result);
 
