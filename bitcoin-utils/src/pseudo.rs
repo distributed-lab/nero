@@ -86,7 +86,7 @@ pub fn OP_4MUL() -> Script {
 }
 
 /// The top stack item is multiplied by 2**k
-pub fn OP_2k_MUL(k: usize) -> Script {
+pub fn OP_2K_MUL(k: usize) -> Script {
     script! {
         for _ in 0..k {
             { OP_2MUL() }

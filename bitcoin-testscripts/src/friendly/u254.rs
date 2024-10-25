@@ -2,40 +2,73 @@
 //! for performing the multiplication of two large integers
 //! (exceeding standard Bitcoin 31-bit integers)
 
-use bitcoin_splitter::split::{core::{form_states_from_shards, SplitType}, script::{IOPair, SplitResult, SplitableScript}};
-use bitcoin_utils::{pseudo::OP_2k_MUL, treepp::*};
+use bitcoin_splitter::split::{
+    core::{form_states_from_shards, SplitType},
+    script::{IOPair, SplitResult, SplitableScript},
+};
+use bitcoin_utils::{pseudo::OP_2K_MUL, treepp::*};
 use bitcoin_window_mul::{
-    bigint::{window::{binary_to_windowed_form, precompute::WindowedPrecomputeTable, NonNativeWindowedBigIntImpl}, U254Windowed, U254, U508},
-    traits::{arithmeticable::Arithmeticable, bitable::Bitable, integer::{NonNativeInteger, NonNativeLimbInteger}, window::Windowable},
+    bigint::{
+        implementation::NonNativeBigIntImpl,
+        window::{binary_to_windowed_form, precompute::WindowedPrecomputeTable},
+    },
+    traits::integer::NonNativeLimbInteger,
 };
 
 use num_bigint::{BigUint, RandomBits};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 
+// Type aliases for some commonly used integers
+pub type U64 = NonNativeBigIntImpl<64, 30>;
+pub type U128 = NonNativeBigIntImpl<128, 30>;
+pub type U254 = NonNativeBigIntImpl<254, 30>;
+pub type U508 = NonNativeBigIntImpl<508, 30>;
+
+/// BitVM-friendly script for multiplying two U254 scripts
+pub type FriendlyU254MulScript = FriendlyMulScript<U254, U508, 3>;
+
+/// BitVM-friendly script for multiplying two U64 scripts
+pub type FriendlyU64MulScript = FriendlyMulScript<U64, U128, 3>;
+
 /// Script that performs the multiplication of
-/// two N-bit numbers.
-pub struct FriendlyU254MulScript<const W: usize>;
+/// two big integers with the width parameter of `W`.
+///
+/// As the generic parameters, it takes the `BaseInt` as
+/// the basic `BigInt` type and `WideInt` as type of the
+/// returned value (which must be with the twice the bitsize of `BaseInt`).
+pub struct FriendlyMulScript<BaseInt, WideInt, const W: usize>
+where
+    BaseInt: NonNativeLimbInteger,
+    WideInt: NonNativeLimbInteger,
+{
+    _marker: std::marker::PhantomData<(BaseInt, WideInt)>,
+}
 
 #[allow(non_snake_case)]
-impl<const W: usize> FriendlyU254MulScript<W> {
+impl<BaseInt, WideInt, const W: usize> FriendlyMulScript<BaseInt, WideInt, W>
+where
+    BaseInt: NonNativeLimbInteger,
+    WideInt: NonNativeLimbInteger,
+{
     /// The size of the decomposition
-    const DECOMPOSITION_SIZE: usize = usize::div_ceil(U254::N_BITS, W);
+    const DECOMPOSITION_SIZE: usize = usize::div_ceil(BaseInt::N_BITS, W);
 
     /// Recovery chunk size that is used to restore the original number
-    const RECOVERY_CHUNK_SIZE: usize = U254::LIMB_SIZE / W;
+    const RECOVERY_CHUNK_SIZE: usize = BaseInt::LIMB_SIZE / W;
 
-    /// Given a chunk `l[0],l[1],...,l[n-1]`, it outputs
-    /// a limb $l = \sum_{i=0}^{n-1} l[i]*2^(W*i)$.
-    pub fn convert_chunk_to_limb(chunk_size: usize) -> Script {
+    /// Given a chunk `{ l[chunk_size-1], l[chunk_size-2], ..., l[1], l[0] }`,
+    /// the function outputs the recovered limb `l = \sum_{i=0}^{n-1} l[i]*2^(W*i)`.
+    pub fn OP_RECOVERLIMB(chunk_size: usize) -> Script {
         script! {
             for i in 0..chunk_size {
                 // Multiplying by 2^(i*W)
-                { OP_2k_MUL(i*W) }
-                OP_TOALTSTACK
+                { OP_2K_MUL(i*W) }
+                if i < chunk_size - 1 {
+                    OP_TOALTSTACK
+                }
             }
 
-            OP_FROMALTSTACK
             // Adding remaining limbs together
             for _ in 0..chunk_size-1 {
                 OP_FROMALTSTACK
@@ -44,10 +77,29 @@ impl<const W: usize> FriendlyU254MulScript<W> {
         }
     }
 
+    /// Given the lookup table ` {0*x}, {1*x}, {2*x}, ..., {(1<<W-1)*x}`,
+    /// returns the single element of `x`. Moreover, this `x` gets
+    /// compressed back to the lower-bit integer.
+    pub fn OP_RECOVER_FROM_PRECOMPUTETABLE() -> Script {
+        script! {
+            for _ in 0..(1<<W)-2 {
+                { WideInt::OP_DROP() }
+            }
+            // At this point, we have { y_decomposition } { 0 } { x }
+            { WideInt::OP_SWAP() } // { y_decomposition } { x } { 0 }
+            { WideInt::OP_DROP() } // { y_decomposition } { x }
+
+            // Compress x back to the original form
+            { WideInt::OP_COMPRESS::<BaseInt>() }
+        }
+    }
+
     /// Restores the original number from the w-width form which lies
-    /// in the altstack.
-    pub fn recover_from_width_decomposition() -> Script {
-        assert_eq!(U254::LIMB_SIZE % W, 0, "N_LIMBS must be divisible by W, but tried to divide {:?} by {:?}", U254::N_LIMBS, W);
+    /// in the stack.
+    ///
+    /// NOTE: Only works when the limb bitsize is divisible by `W`
+    pub fn OP_RECOVER() -> Script {
+        assert_eq!(BaseInt::LIMB_SIZE % W, 0, "N_LIMBS must be divisible by W",);
 
         script! {
             // Reverse the decomposition
@@ -58,115 +110,121 @@ impl<const W: usize> FriendlyU254MulScript<W> {
                 OP_FROMALTSTACK
             }
 
-            for i in 0..U254::N_LIMBS {
+            for i in 0..BaseInt::N_LIMBS {
                 // Convering the batch of decomposition limbs to the regular limb
-                if i != U254::N_LIMBS - 1 {
-                    { Self::convert_chunk_to_limb(Self::RECOVERY_CHUNK_SIZE) }
+                if i != BaseInt::N_LIMBS - 1 {
+                    { Self::OP_RECOVERLIMB(Self::RECOVERY_CHUNK_SIZE) }
+                    OP_TOALTSTACK // Pushing the limb to the altstack
                 } else {
-                    { Self::convert_chunk_to_limb(Self::DECOMPOSITION_SIZE % Self::RECOVERY_CHUNK_SIZE) }
+                    { Self::OP_RECOVERLIMB(Self::DECOMPOSITION_SIZE % Self::RECOVERY_CHUNK_SIZE) }
                 }
-
-                // Pushing the limb to the altstack
-                OP_TOALTSTACK
             }
 
             // Picking all the limbs from the altstack
-            for _ in 0..U254::N_LIMBS {
+            for _ in 0..BaseInt::N_LIMBS-1 {
                 OP_FROMALTSTACK
             }
         }
     }
 
-    /// Given { y_decomposition } { lookup_table } { r }, it converts it to
-    /// { y } { x } { r }
-    pub fn compress_step() -> Script {
-        script!{
-            { U508::OP_TOALTSTACK() } // { y_decomposition } { lookup_table }
-            for _ in 0..(1<<W)-2 {
-                { U508::OP_DROP() } 
-            } 
-            // At this point, we have { y_decomposition } { 0 } { x }
-            { U508::OP_SWAP() } // { y_decomposition } { x } { 0 }
-            { U508::OP_DROP() } // { y_decomposition } { x }
-            for i in 0..U508::N_LIMBS-U254::N_LIMBS {
-                { U508::N_LIMBS - i - 1 } OP_ROLL OP_DROP
-            }
-            { U254::OP_TOALTSTACK() } // { y_decomposition } U254
-            { Self::recover_from_width_decomposition() } // { y }
-            { U254::OP_FROMALTSTACK() } // { y } { x }
-            { U508::OP_FROMALTSTACK() } // { y } { x } { r }
+    /// Given an integer, decomposes it into the windowed form
+    /// and pushes the result to the mainstack.
+    pub fn OP_TOWINDOWFORM() -> Script {
+        script! {
+            { BaseInt::OP_TOBEBITS_TOALTSTACK() }
+            { binary_to_windowed_form::<W>(BaseInt::N_BITS) }
+        }
+    }
+
+    /// Given `{ decomposition } { lookup_table } { r }` in the stack,
+    /// this function converts it to the form `{ y } { x } { r }`.
+    ///
+    /// This function is used as the part of the large multiplication
+    /// script to reduce the cost of intermediate states. Further, this state
+    /// is decompressed using the [`Self::OP_DECOMPRESS`] function.
+    pub fn OP_COMPRESS() -> Script {
+        script! {
+            { WideInt::OP_TOALTSTACK() }                // { decomposition } { lookup_table }
+            { Self::OP_RECOVER_FROM_PRECOMPUTETABLE() } // { decomposition } { x }
+            { BaseInt::OP_TOALTSTACK() }                // { decomposition }
+            { Self::OP_RECOVER() }                      // { y }
+            { BaseInt::OP_FROMALTSTACK() }              // { y } { x }
+            { WideInt::OP_FROMALTSTACK() }              // { y } { x } { r }
         }
     }
 
     /// Given { y } { x } { r }, it converts it to
     /// { y } { x } { r }
-    pub fn decompress_step() -> Script {
-        script!{
-            { U508::OP_TOALTSTACK() } // { y } { x }
-            { U254::OP_EXTEND::<U508>() }
-            { U508::OP_TOALTSTACK() } // { y }
-            { U254::OP_TOBEBITS_TOALTSTACK() }
-            { binary_to_windowed_form::<W>(U254::N_BITS) } // { y_decomposition }
-            { U508::OP_FROMALTSTACK() } // { y_decomposition } { x }
-            { WindowedPrecomputeTable::<U508, W, false>::initialize() } // { y_decomposition } { lookup_table }
-            { U508::OP_FROMALTSTACK() } // { y_decomposition } { lookup_table } { r }
+    pub fn OP_DECOMPRESS() -> Script {
+        script! {
+            { WideInt::OP_TOALTSTACK() }     // { y } { x_compressed }
+            { BaseInt::OP_EXTEND::<WideInt>() } // { y } { x }
+            { WideInt::OP_TOALTSTACK() }     // { y }
+            { Self::OP_TOWINDOWFORM() }   // { y_decomposition }
+            { WideInt::OP_FROMALTSTACK() }   // { y_decomposition } { x }
+            { WindowedPrecomputeTable::<WideInt, W, false>::initialize() } // { y_decomposition } { lookup_table }
+            { WideInt::OP_FROMALTSTACK() }   // { y_decomposition } { lookup_table } { r }
         }
     }
 }
 
-impl<const W: usize> SplitableScript for FriendlyU254MulScript<W> {
+impl<BaseInt, WideInt, const W: usize> SplitableScript for FriendlyMulScript<BaseInt, WideInt, W>
+where
+    BaseInt: NonNativeLimbInteger,
+    WideInt: NonNativeLimbInteger,
+{
     /// Input is simply two 254-bit numbers
-    const INPUT_SIZE: usize = 2 * U254::N_LIMBS;
+    const INPUT_SIZE: usize = 2 * BaseInt::N_LIMBS;
 
     /// Output is a 508-bit number
-    const OUTPUT_SIZE: usize = U508::N_LIMBS;
+    const OUTPUT_SIZE: usize = WideInt::N_LIMBS;
 
     fn script() -> Script {
         script! {
             // Convert to w-width form. This way, our stack looks like
             // { x } { y_decomposition }
-            { U254::OP_TOBEBITS_TOALTSTACK() }
-            { binary_to_windowed_form::<W>(U254::N_BITS) }
-            
+            { BaseInt::OP_TOBEBITS_TOALTSTACK() }
+            { binary_to_windowed_form::<W>(BaseInt::N_BITS) }
+
             // Picking { x } to the top to get
             // { y_decomposition } { x }
-            for _ in (0..U254::N_LIMBS).rev() {
-                { Self::DECOMPOSITION_SIZE + U254::N_LIMBS - 1 } OP_ROLL
+            for _ in (0..BaseInt::N_LIMBS).rev() {
+                { Self::DECOMPOSITION_SIZE + BaseInt::N_LIMBS - 1 } OP_ROLL
             }
 
             // Extend to larger integer to get
             // { y_decomposition } { x_extended }
-            { U254::OP_EXTEND::<U508>() }
+            { BaseInt::OP_EXTEND::<WideInt>() }
 
             // Precomputing {0*z, 1*z, ..., ((1<<WIDTH)-1)*z} to get
             // { y_decomposition } { lookup_table }
-            { WindowedPrecomputeTable::<U508, W, false>::initialize() }
+            { WindowedPrecomputeTable::<WideInt, W, false>::initialize() }
 
             // We initialize the result
             // Note that we can simply pick the precomputed value
             // since 0*16 is still 0, so we omit the doubling :)
-            { (1<<W) * U508::N_LIMBS } OP_PICK 1 OP_ADD
+            { (1<<W) * WideInt::N_LIMBS } OP_PICK 1 OP_ADD
             { 1<<W }
             OP_SWAP
             OP_SUB
-            { U508::OP_PICKSTACK() }
+            { WideInt::OP_PICKSTACK() }
 
             // At this point, our stack looks as follows:
             // { y_decomposition } { lookup_table } { r }
 
-            // Dropping stage
-            { Self::compress_step() }
+            { Self::OP_COMPRESS() }
 
             for i in 1..Self::DECOMPOSITION_SIZE {
-                { Self::decompress_step() }
+                // We decompress the compressed state to make the loop interation
+                { Self::OP_DECOMPRESS() }
 
                 // Double the result WIDTH times
                 for _ in 0..W {
-                    { U508::OP_2MUL_NOOVERFLOW(0) }
+                    { WideInt::OP_2MUL_NOOVERFLOW(0) }
                 }
 
                 // Picking di from the stack
-                { ((1<<W) + 1) * U508::N_LIMBS + i } OP_PICK
+                { ((1<<W) + 1) * WideInt::N_LIMBS + i } OP_PICK
 
                 // Add the precomputed value to the result.
                 // Since currently stack looks like:
@@ -176,17 +234,19 @@ impl<const W: usize> SplitableScript for FriendlyU254MulScript<W> {
                 { 1<<W }
                 OP_SWAP
                 OP_SUB
-                { U508::OP_PICKSTACK() }
-                { U508::OP_ADD_NOOVERFLOW(0, 1) }
+                { WideInt::OP_PICKSTACK() }
+                { WideInt::OP_ADD_NOOVERFLOW(0, 1) }
 
-                { Self::compress_step() }
+                // After the loop iteration is completed, we compress the state
+                // to reduce the cost of the intermediate states.
+                { Self::OP_COMPRESS() }
             }
 
             // Clearing the precomputed values from the stack.
-            { U508::OP_TOALTSTACK() }
-            { U254::OP_DROP() }
-            { U254::OP_DROP() }
-            { U508::OP_FROMALTSTACK() }
+            { WideInt::OP_TOALTSTACK() }
+            { BaseInt::OP_DROP() }
+            { BaseInt::OP_DROP() }
+            { WideInt::OP_FROMALTSTACK() }
         }
     }
 
@@ -194,16 +254,16 @@ impl<const W: usize> SplitableScript for FriendlyU254MulScript<W> {
         let mut prng = ChaCha20Rng::seed_from_u64(0);
 
         // Generate two random 254-bit numbers and calculate their sum
-        let num_1: BigUint = prng.sample(RandomBits::new(U254Windowed::N_BITS as u64));
-        let num_2: BigUint = prng.sample(RandomBits::new(U254Windowed::N_BITS as u64));
+        let num_1: BigUint = prng.sample(RandomBits::new(BaseInt::N_BITS as u64));
+        let num_2: BigUint = prng.sample(RandomBits::new(BaseInt::N_BITS as u64));
         let product: BigUint = num_1.clone() * num_2.clone();
 
         IOPair {
             input: script! {
-                { U254Windowed::OP_PUSH_U32LESLICE(&num_1.to_u32_digits()) }
-                { U254Windowed::OP_PUSH_U32LESLICE(&num_2.to_u32_digits()) }
+                { BaseInt::OP_PUSH_U32LESLICE(&num_1.to_u32_digits()) }
+                { BaseInt::OP_PUSH_U32LESLICE(&num_2.to_u32_digits()) }
             },
-            output: U508::OP_PUSH_U32LESLICE(&product.to_u32_digits()),
+            output: WideInt::OP_PUSH_U32LESLICE(&product.to_u32_digits()),
         }
     }
 
@@ -211,8 +271,8 @@ impl<const W: usize> SplitableScript for FriendlyU254MulScript<W> {
         let mut prng = ChaCha20Rng::seed_from_u64(0);
 
         // Generate two random 254-bit numbers and calculate their sum
-        let num_1: BigUint = prng.sample(RandomBits::new(U254Windowed::N_BITS as u64));
-        let num_2: BigUint = prng.sample(RandomBits::new(U254Windowed::N_BITS as u64));
+        let num_1: BigUint = prng.sample(RandomBits::new(BaseInt::N_BITS as u64));
+        let num_2: BigUint = prng.sample(RandomBits::new(BaseInt::N_BITS as u64));
         let mut product: BigUint = num_1.clone() * num_2.clone();
 
         // Flip a random bit in the product
@@ -221,63 +281,63 @@ impl<const W: usize> SplitableScript for FriendlyU254MulScript<W> {
 
         IOPair {
             input: script! {
-                { U254Windowed::OP_PUSH_U32LESLICE(&num_1.to_u32_digits()) }
-                { U254Windowed::OP_PUSH_U32LESLICE(&num_2.to_u32_digits()) }
+                { BaseInt::OP_PUSH_U32LESLICE(&num_1.to_u32_digits()) }
+                { BaseInt::OP_PUSH_U32LESLICE(&num_2.to_u32_digits()) }
             },
-            output: U508::OP_PUSH_U32LESLICE(&product.to_u32_digits()),
+            output: WideInt::OP_PUSH_U32LESLICE(&product.to_u32_digits()),
         }
     }
 
     fn default_split(input: Script, _split_type: SplitType) -> SplitResult {
         // First, we need to form the script
         let mut shards: Vec<Script> = vec![];
-        shards.push(script!{
+        shards.push(script! {
             // Convert to w-width form. This way, our stack looks like
             // { x } { y_decomposition }
-            { U254::OP_TOBEBITS_TOALTSTACK() }
-            { binary_to_windowed_form::<W>(U254::N_BITS) }
-            
+            { BaseInt::OP_TOBEBITS_TOALTSTACK() }
+            { binary_to_windowed_form::<W>(BaseInt::N_BITS) }
+
             // Picking { x } to the top to get
             // { y_decomposition } { x }
-            for _ in (0..U254::N_LIMBS).rev() {
-                { Self::DECOMPOSITION_SIZE + U254::N_LIMBS - 1 } OP_ROLL
+            for _ in (0..BaseInt::N_LIMBS).rev() {
+                { Self::DECOMPOSITION_SIZE + BaseInt::N_LIMBS - 1 } OP_ROLL
             }
 
             // Extend to larger integer to get
             // { y_decomposition } { x_extended }
-            { U254::OP_EXTEND::<U508>() }
+            { BaseInt::OP_EXTEND::<WideInt>() }
 
             // Precomputing {0*z, 1*z, ..., ((1<<WIDTH)-1)*z} to get
             // { y_decomposition } { lookup_table }
-            { WindowedPrecomputeTable::<U508, W, false>::initialize() }
+            { WindowedPrecomputeTable::<WideInt, W, false>::initialize() }
 
             // We initialize the result
             // Note that we can simply pick the precomputed value
             // since 0*16 is still 0, so we omit the doubling :)
-            { (1<<W) * U508::N_LIMBS } OP_PICK 1 OP_ADD
+            { (1<<W) * WideInt::N_LIMBS } OP_PICK 1 OP_ADD
             { 1<<W }
             OP_SWAP
             OP_SUB
-            { U508::OP_PICKSTACK() }
+            { WideInt::OP_PICKSTACK() }
 
             // At this point, our stack looks as follows:
             // { y_decomposition } { lookup_table } { r }
 
             // Dropping stage
-            { Self::compress_step() }
+            { Self::OP_COMPRESS() }
         });
 
         for i in 1..Self::DECOMPOSITION_SIZE {
-            shards.push(script!{
-                { Self::decompress_step() }
+            shards.push(script! {
+                { Self::OP_DECOMPRESS() }
 
                 // Double the result WIDTH times
                 for _ in 0..W {
-                    { U508::OP_2MUL_NOOVERFLOW(0) }
+                    { WideInt::OP_2MUL_NOOVERFLOW(0) }
                 }
 
                 // Picking di from the stack
-                { ((1<<W) + 1) * U508::N_LIMBS + i } OP_PICK
+                { ((1<<W) + 1) * WideInt::N_LIMBS + i } OP_PICK
 
                 // Add the precomputed value to the result.
                 // Since currently stack looks like:
@@ -287,24 +347,24 @@ impl<const W: usize> SplitableScript for FriendlyU254MulScript<W> {
                 { 1<<W }
                 OP_SWAP
                 OP_SUB
-                { U508::OP_PICKSTACK() }
-                { U508::OP_ADD_NOOVERFLOW(0, 1) }
+                { WideInt::OP_PICKSTACK() }
+                { WideInt::OP_ADD_NOOVERFLOW(0, 1) }
 
-                { Self::compress_step() }
+                { Self::OP_COMPRESS() }
             })
         }
 
         shards.push(script! {
             // Clearing the precomputed values from the stack.
-            { U508::OP_TOALTSTACK() }
-            { U254::OP_DROP() }
-            { U254::OP_DROP() }
-            { U508::OP_FROMALTSTACK() }
+            { WideInt::OP_TOALTSTACK() }
+            { BaseInt::OP_DROP() }
+            { BaseInt::OP_DROP() }
+            { WideInt::OP_FROMALTSTACK() }
         });
 
         // Now, we need to form the intermediate states
         let intermediate_states = form_states_from_shards(shards.clone(), input);
-        
+
         SplitResult {
             shards,
             intermediate_states,
@@ -317,71 +377,30 @@ mod tests {
     use super::*;
     use bitcoin_splitter::split::core::SplitType;
     use bitcoin_utils::{comparison::OP_LONGEQUALVERIFY, stack_to_script};
-    use bitcoin_window_mul::traits::comparable::Comparable;
-    
+    use bitcoin_window_mul::{
+        bigint::{window::NonNativeWindowedBigIntImpl, U254Windowed},
+        traits::{comparable::Comparable, integer::NonNativeInteger},
+    };
+
     #[test]
-    fn debug() {
-        let mut prng = ChaCha20Rng::seed_from_u64(0);
-        let num_1: BigUint = prng.sample(RandomBits::new(U254Windowed::N_BITS as u64));
-        let num_2: BigUint = prng.sample(RandomBits::new(U254Windowed::N_BITS as u64));
-        let product: BigUint = num_1.clone() * num_2.clone();
-
-        let script = script! {
-            { U254Windowed::OP_PUSH_U32LESLICE(&num_1.to_u32_digits()) }
-            { U254Windowed::OP_PUSH_U32LESLICE(&num_2.to_u32_digits()) }
-            { FriendlyU254MulScript::<3>::script() }
-            { FriendlyU254MulScript::<3>::decompress_step() }
-            // for _ in 0..FriendlyU254MulScript::<3> {
-            //     OP_DROP
-            // }
-            OP_TRUE
-            // { U254Windowed::OP_PUSH_U32LESLICE(&num_2.to_u32_digits()) }
-            // { U254Windowed::OP_EQUAL(0, 1) }
-            // { U508::OP_PUSH_U32LESLICE(&product.to_u32_digits()) }
-            // { U508::OP_EQUAL(0, 1) }
-        };
-
-        let result = execute_script(script);
-        println!("{:?}", stack_to_script(&result.main_stack).to_asm_string());
-        assert!(result.success, "Verification has failed");
+    fn test_u254_verify() {
+        assert!(FriendlyU254MulScript::verify_random());
     }
 
     #[test]
-    fn test_compress_decompress() {
-        let mut prng = ChaCha20Rng::seed_from_u64(0);
-        let x: BigUint = prng.sample(RandomBits::new(U254Windowed::N_BITS as u64));
-    
-        let verification_script = script! {
-            { U254::OP_PUSH_U32LESLICE(&x.to_u32_digits()) }
-            { U254::OP_EXTEND::<U508>() }
-            for i in 0..U508::N_LIMBS-U254::N_LIMBS {
-                { U508::N_LIMBS - i - 1 } OP_ROLL OP_DROP
-            }
-            { U254::OP_PUSH_U32LESLICE(&x.to_u32_digits()) }
-            { U254::OP_EQUAL(1, 0) }
-        };
-
-        let result = execute_script(verification_script);
-        println!("{:?}", stack_to_script(&result.main_stack).to_asm_string());
-        assert!(result.success, "Verification has failed");
-    }
-
-    #[test]
-    fn test_verify() {
-        assert!(FriendlyU254MulScript::<3>::verify_random());
+    fn test_u64_verify() {
+        assert!(FriendlyU64MulScript::verify_random());
     }
 
     #[test]
     fn test_chunk_to_limb() {
         const DECOMPOSITION: [u32; 10] = [2, 4, 2, 6, 3, 4, 1, 3, 4, 1];
 
-        assert_eq!(DECOMPOSITION.len(), FriendlyU254MulScript::<3>::RECOVERY_CHUNK_SIZE, "Invalid decomposition size");
-
         let verification_script = script! {
-            for element in DECOMPOSITION.into_iter() {
+            for element in DECOMPOSITION.into_iter().rev() {
                 { element }
             }
-            { FriendlyU254MulScript::<3>::convert_chunk_to_limb(DECOMPOSITION.len()) }
+            { FriendlyU254MulScript::OP_RECOVERLIMB(DECOMPOSITION.len()) }
             { 208026786 }
             OP_EQUAL
         };
@@ -391,12 +410,10 @@ mod tests {
     }
 
     #[test]
-    fn test_recovery() {
-        const WINDOW_SIZE: usize = 2;
-
+    fn test_u254_recovery() {
         // Picking a random integer
         let mut prng = ChaCha20Rng::seed_from_u64(0);
-        let x: BigUint = prng.sample(RandomBits::new(U254Windowed::N_BITS as u64));
+        let x: BigUint = prng.sample(RandomBits::new(U254::N_BITS as u64));
 
         // In the verification script, we do the following:
         // 1. Push x to the stack
@@ -406,37 +423,36 @@ mod tests {
         let verification_script = script! {
             { U254::OP_PUSH_U32LESLICE(&x.to_u32_digits()) }
             { U254::OP_PICK(0) }
-            { U254::OP_TOBEBITS_TOALTSTACK() }
-            { binary_to_windowed_form::<WINDOW_SIZE>(U254::N_BITS) }
-            { FriendlyU254MulScript::<WINDOW_SIZE>::recover_from_width_decomposition() }
+            { FriendlyU254MulScript::OP_TOWINDOWFORM() }
+            { FriendlyU254MulScript::OP_RECOVER() }
             { U254::OP_EQUAL(0, 1) }
         };
 
         let result = execute_script(verification_script);
-        println!("{:?}", stack_to_script(&result.main_stack).to_asm_string());
         assert!(result.success, "Verification has failed");
     }
 
     #[test]
-    fn test_invalid_generate() {
-        let IOPair { input, output } = FriendlyU254MulScript::<4>::generate_invalid_io_pair();
+    fn test_u254_invalid_generate() {
+        let IOPair { input, output } = FriendlyU254MulScript::generate_invalid_io_pair();
         assert!(
-            !FriendlyU254MulScript::<2>::verify(input.clone(), output.clone()),
+            !FriendlyU254MulScript::verify(input.clone(), output.clone()),
             "input/output is correct"
         );
     }
 
     #[test]
-    fn test_naive_split_correctness() {
+    fn test_u254_naive_split_correctness() {
         // Generating a random valid input for the script and the script itself
-        let IOPair { input, output } = FriendlyU254MulScript::<3>::generate_valid_io_pair();
+        let IOPair { input, output } = FriendlyU254MulScript::generate_valid_io_pair();
         assert!(
-            FriendlyU254MulScript::<3>::verify(input.clone(), output.clone()),
+            FriendlyU254MulScript::verify(input.clone(), output.clone()),
             "input/output is not correct"
         );
 
         // Splitting the script into shards
-        let split_result = FriendlyU254MulScript::<3>::default_split(input.clone(), SplitType::ByInstructions);
+        let split_result =
+            FriendlyU254MulScript::default_split(input.clone(), SplitType::ByInstructions);
 
         // Now, we are going to concatenate all the shards and verify that the script is also correct
         let verification_script = script! {
@@ -447,7 +463,7 @@ mod tests {
             { output }
 
             // Now, we need to verify that the output is correct.
-            { OP_LONGEQUALVERIFY(FriendlyU254MulScript::<3>::OUTPUT_SIZE) }
+            { OP_LONGEQUALVERIFY(FriendlyU254MulScript::OUTPUT_SIZE) }
             OP_TRUE
         };
 
@@ -456,21 +472,26 @@ mod tests {
     }
 
     #[test]
-    fn test_naive_split() {
-        const WIDTH_SIZE: usize = 2;
-
+    fn test_u254_naive_split() {
         // First, we generate the pair of input and output scripts
-        let IOPair { input, output } = FriendlyU254MulScript::<WIDTH_SIZE>::generate_valid_io_pair();
+        let IOPair { input, output } = FriendlyU254MulScript::generate_valid_io_pair();
+
+        // Debugging the whole script size:
+        println!(
+            "Old algorithm costed {} bytes",
+            U254Windowed::OP_WIDENINGMUL::<U508>().len()
+        );
+        println!(
+            "New script size is {} bytes",
+            FriendlyU254MulScript::script().len()
+        );
 
         // Splitting the script into shards
-        let split_result = FriendlyU254MulScript::<WIDTH_SIZE>::default_split(input, SplitType::ByInstructions);
+        let split_result = FriendlyU254MulScript::default_split(input, SplitType::ByInstructions);
 
-        for shard in split_result.shards.iter() {
-            println!("Shard: {:?}", shard.len());
+        for (i, shard) in split_result.shards.iter().enumerate() {
+            println!("Shard {i} length: {} bytes", shard.len());
         }
-
-        // Debugging the split result
-        println!("Split result: {:?}", split_result);
 
         // Checking the last state (which must be equal to the result of the multiplication)
         let last_state = split_result.must_last_state();
@@ -491,24 +512,72 @@ mod tests {
         // Printing
         for (i, state) in split_result.intermediate_states.iter().enumerate() {
             println!(
-                "Intermediate state #{}: {:?}",
+                "Intermediate state {} is {:?} bytes",
                 i,
                 state.stack.len() + state.altstack.len()
             );
         }
+    }
 
-        // Now, we debug the total size of the states
-        let total_size = split_result.total_states_size();
-        println!("Total size of the states: {} bytes", total_size);
+    #[test]
+    fn test_u64_naive_split() {
+        // First, we generate the pair of input and output scripts
+        let IOPair { input, output } = FriendlyU64MulScript::generate_valid_io_pair();
+
+        // Next, we try the old version of mul to compare the sizes
+        type U64Windowed = NonNativeWindowedBigIntImpl<U64, 4>;
+
+        // Debugging the whole script size:
+        println!(
+            "Old algorithm costed {} bytes",
+            U64Windowed::OP_WIDENINGMUL::<U128>().len()
+        );
+        println!(
+            "New script size is {} bytes",
+            FriendlyU64MulScript::script().len()
+        );
+
+        // Splitting the script into shards
+        let split_result = FriendlyU64MulScript::default_split(input, SplitType::ByInstructions);
+
+        for (i, shard) in split_result.shards.iter().enumerate() {
+            println!("Shard {i} length: {} bytes", shard.len());
+        }
+
+        // Checking the last state (which must be equal to the result of the multiplication)
+        let last_state = split_result.must_last_state();
+
+        // Altstack must be empty
+        assert!(last_state.altstack.is_empty(), "altstack is not empty!");
+
+        // The element of the mainstack must be equal to the actual output
+        let verification_script = script! {
+            { stack_to_script(&last_state.stack) }
+            { output }
+            { U128::OP_EQUAL(0, 1) }
+        };
+
+        let result = execute_script(verification_script);
+        assert!(result.success, "verification has failed");
+
+        // Printing
+        for (i, state) in split_result.intermediate_states.iter().enumerate() {
+            println!(
+                "Intermediate state {} is {:?} bytes",
+                i,
+                state.stack.len() + state.altstack.len()
+            );
+        }
     }
 
     #[test]
     fn test_split_each_shard() {
         // First, we generate the pair of input and output scripts
-        let IOPair { input, output: _ } = FriendlyU254MulScript::<4>::generate_valid_io_pair();
+        let IOPair { input, output: _ } = FriendlyU254MulScript::generate_valid_io_pair();
 
         // Splitting the script into shards
-        let split_result = FriendlyU254MulScript::<4>::default_split(input.clone(), SplitType::ByInstructions);
+        let split_result =
+            FriendlyU254MulScript::default_split(input.clone(), SplitType::ByInstructions);
 
         for i in 0..split_result.len() {
             // Forming first two inputs. Note that the first input is the input script itself
@@ -551,10 +620,11 @@ mod tests {
     #[test]
     fn test_split_to_u32() {
         // First, we generate the pair of input and output scripts
-        let IOPair { input, output: _ } = FriendlyU254MulScript::<4>::generate_valid_io_pair();
+        let IOPair { input, output: _ } = FriendlyU254MulScript::generate_valid_io_pair();
 
         // Splitting the script into shards
-        let split_result = FriendlyU254MulScript::<4>::default_split(input.clone(), SplitType::ByInstructions);
+        let split_result =
+            FriendlyU254MulScript::default_split(input.clone(), SplitType::ByInstructions);
 
         for i in 0..split_result.len() {
             // Forming first two inputs. Note that the first input is the input script itself
@@ -595,51 +665,5 @@ mod tests {
 
             assert!(result.success, "verification has failed");
         }
-    }
-
-    #[test]
-    #[ignore = "too-large computation, run separately"]
-    fn test_fuzzy_split() {
-        // First, we generate the pair of input and output scripts
-        let IOPair { input, output } = FriendlyU254MulScript::<4>::generate_valid_io_pair();
-
-        // Splitting the script into shards
-        let split_result = FriendlyU254MulScript::<4>::fuzzy_split(input, SplitType::ByInstructions);
-
-        for shard in split_result.shards.iter() {
-            println!("Shard: {:?}", shard.len());
-        }
-
-        // Debugging the split result
-        println!("Split result: {:?}", split_result);
-
-        // Checking the last state (which must be equal to the result of the multiplication)
-        let last_state = split_result.must_last_state();
-
-        // Altstack must be empty
-        assert!(last_state.altstack.is_empty(), "altstack is not empty!");
-
-        // The element of the mainstack must be equal to the actual output
-        let verification_script = script! {
-            { stack_to_script(&last_state.stack) }
-            { output }
-            { U508::OP_EQUAL(0, 1) }
-        };
-
-        let result = execute_script(verification_script);
-        assert!(result.success, "verification has failed");
-
-        // Printing
-        for (i, state) in split_result.intermediate_states.iter().enumerate() {
-            println!(
-                "Intermediate state #{}: {:?}",
-                i,
-                state.stack.len() + state.altstack.len()
-            );
-        }
-
-        // Now, we debug the total size of the states
-        let total_size = split_result.total_states_size();
-        println!("Total size of the states: {} bytes", total_size);
     }
 }
