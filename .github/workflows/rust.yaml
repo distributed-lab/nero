@@ -33,6 +33,18 @@ jobs:
       - name: Build
         run: cargo build --verbose
 
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: ${{ env.rust_min }}
+        components: rustfmt
+    - uses: Swatinem/rust-cache@v2
+    - name: Format
+      run: cargo fmt --check
+
   clippy:
     name: clippy
     runs-on: ubuntu-latest
