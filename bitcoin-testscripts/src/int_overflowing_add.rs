@@ -5,11 +5,8 @@
 use bitcoin_splitter::split::script::{IOPair, SplitableScript};
 use bitcoin_utils::treepp::*;
 use bitcoin_window_mul::{
-    bigint::U254,
-    traits::{
-        arithmeticable::Arithmeticable,
-        integer::{NonNativeInteger, NonNativeLimbInteger},
-    },
+    bigint::implementation::NonNativeBigIntImpl,
+    traits::{arithmeticable::Arithmeticable, integer::NonNativeInteger},
 };
 
 use core::ops::{Rem, Shl};
@@ -18,43 +15,55 @@ use num_traits::One;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 
-/// Script that performs the addition of two 254-bit numbers
-pub struct U254AddScript;
+/// Script that performs the overflowing addition of two N-bit numbers
+pub struct BigIntOverflowingAddScript<const N_BITS: usize>;
 
-/// Input size is double the number of limbs of U254 since we are adding two numbers
-const INPUT_SIZE: usize = 2 * U254::N_LIMBS;
-/// Output size is the number of limbs of U254
-const OUTPUT_SIZE: usize = U254::N_LIMBS;
+/// The limb size used to represent an integer. In practice,
+/// 29 is the most reliable limb size.
+const LIMB_SIZE: usize = 29;
 
-impl SplitableScript<{ INPUT_SIZE }, { OUTPUT_SIZE }> for U254AddScript {
+impl<const N_BITS: usize> BigIntOverflowingAddScript<N_BITS> {
+    /// Limb size in bits to represent an integer
+    const LIMB_SIZE: usize = LIMB_SIZE;
+}
+
+impl<const N_BITS: usize> SplitableScript for BigIntOverflowingAddScript<N_BITS> {
+    /// Input size is double the number of limbs of BigInteger since we are adding two numbers
+    const INPUT_SIZE: usize = 2 * usize::div_ceil(N_BITS, Self::LIMB_SIZE);
+    /// Output size is the number of limbs of a bit integer
+    const OUTPUT_SIZE: usize = usize::div_ceil(N_BITS, Self::LIMB_SIZE);
+
     fn script() -> Script {
-        U254::OP_ADD(1, 0)
+        NonNativeBigIntImpl::<N_BITS, LIMB_SIZE>::OP_ADD(1, 0)
     }
 
-    fn generate_valid_io_pair() -> IOPair<{ INPUT_SIZE }, { OUTPUT_SIZE }> {
+    fn generate_valid_io_pair() -> IOPair {
         let mut prng = ChaCha20Rng::seed_from_u64(0);
 
         // Generate two random 254-bit numbers and calculate their sum
-        let num_1: BigUint = prng.sample(RandomBits::new(254));
-        let num_2: BigUint = prng.sample(RandomBits::new(254));
-        let sum: BigUint = (num_1.clone() + num_2.clone()).rem(BigUint::one().shl(254));
+        let num_1: BigUint = prng.sample(RandomBits::new(N_BITS as u64));
+        let num_2: BigUint = prng.sample(RandomBits::new(N_BITS as u64));
+        let sum: BigUint = (num_1.clone() + num_2.clone()).rem(BigUint::one().shl(N_BITS as u64));
 
         IOPair {
             input: script! {
-                { U254::OP_PUSH_U32LESLICE(&num_1.to_u32_digits()) }
-                { U254::OP_PUSH_U32LESLICE(&num_2.to_u32_digits()) }
+                { NonNativeBigIntImpl::<N_BITS, LIMB_SIZE>::OP_PUSH_U32LESLICE(&num_1.to_u32_digits()) }
+                { NonNativeBigIntImpl::<N_BITS, LIMB_SIZE>::OP_PUSH_U32LESLICE(&num_2.to_u32_digits()) }
             },
-            output: U254::OP_PUSH_U32LESLICE(&sum.to_u32_digits()),
+            output: NonNativeBigIntImpl::<N_BITS, LIMB_SIZE>::OP_PUSH_U32LESLICE(
+                &sum.to_u32_digits(),
+            ),
         }
     }
 
-    fn generate_invalid_io_pair() -> IOPair<{ INPUT_SIZE }, { OUTPUT_SIZE }> {
+    fn generate_invalid_io_pair() -> IOPair {
         let mut prng = ChaCha20Rng::seed_from_u64(0);
 
         // Generate two random 254-bit numbers and calculate their sum
-        let num_1: BigUint = prng.sample(RandomBits::new(254));
-        let num_2: BigUint = prng.sample(RandomBits::new(254));
-        let mut sum: BigUint = (num_1.clone() + num_2.clone()).rem(BigUint::one().shl(254));
+        let num_1: BigUint = prng.sample(RandomBits::new(N_BITS as u64));
+        let num_2: BigUint = prng.sample(RandomBits::new(N_BITS as u64));
+        let mut sum: BigUint =
+            (num_1.clone() + num_2.clone()).rem(BigUint::one().shl(N_BITS as u64));
 
         // Flip a random bit in the sum
         let bit_to_flip = prng.gen_range(0..sum.bits());
@@ -62,10 +71,12 @@ impl SplitableScript<{ INPUT_SIZE }, { OUTPUT_SIZE }> for U254AddScript {
 
         IOPair {
             input: script! {
-                { U254::OP_PUSH_U32LESLICE(&num_1.to_u32_digits()) }
-                { U254::OP_PUSH_U32LESLICE(&num_2.to_u32_digits()) }
+                { NonNativeBigIntImpl::<N_BITS, LIMB_SIZE>::OP_PUSH_U32LESLICE(&num_1.to_u32_digits()) }
+                { NonNativeBigIntImpl::<N_BITS, LIMB_SIZE>::OP_PUSH_U32LESLICE(&num_2.to_u32_digits()) }
             },
-            output: U254::OP_PUSH_U32LESLICE(&sum.to_u32_digits()),
+            output: NonNativeBigIntImpl::<N_BITS, LIMB_SIZE>::OP_PUSH_U32LESLICE(
+                &sum.to_u32_digits(),
+            ),
         }
     }
 }
@@ -73,11 +84,12 @@ impl SplitableScript<{ INPUT_SIZE }, { OUTPUT_SIZE }> for U254AddScript {
 #[cfg(test)]
 mod tests {
     use bitcoin_splitter::split::core::SplitType;
-    use bitcoin_window_mul::traits::comparable::Comparable;
-
     use bitcoin_utils::{comparison::OP_LONGEQUALVERIFY, stack_to_script};
+    use bitcoin_window_mul::{bigint::U254, traits::comparable::Comparable};
 
     use super::*;
+
+    type U254AddScript = BigIntOverflowingAddScript<254>;
 
     #[test]
     fn test_verify() {

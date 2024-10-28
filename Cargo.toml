@@ -5,8 +5,10 @@ members = [
 	"bitcoin-winternitz",
 	"bitcoin-scriptexec",
 	"bitcoin-testscripts",
-	"core"
-, "bitcoin-utils", "nero-cli"]
+	"core",
+	"bitcoin-utils",
+	"nero-cli",
+]
 resolver = "2"
 
 [workspace.dependencies]

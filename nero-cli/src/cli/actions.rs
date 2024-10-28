@@ -44,17 +44,11 @@ pub fn assert_tx(ctx: Context, args: AssertTxArgs) -> eyre::Result<()> {
     let opts = Options::default();
 
     // FIXME(Velnbur): make this optionally valid
-    let (assert, invalid_chunk_idx) = AssertTransaction::<
-        { SquareFibonacciScript::<1024>::INPUT_SIZE },
-        { SquareFibonacciScript::<1024>::OUTPUT_SIZE },
-        SquareFibonacciScript<1024>,
-    >::with_options_distorted::<[u8; 32], SmallRng>(
-        input_script,
-        args.pubkey,
-        args.amount,
-        opts,
-        [1; 32],
-    );
+    let (assert, invalid_chunk_idx) =
+        AssertTransaction::<SquareFibonacciScript<1024>>::with_options_distorted::<
+            [u8; 32],
+            SmallRng,
+        >(input_script, args.pubkey, args.amount, opts, [1; 32]);
 
     let assert_output_address = Address::from_script(
         &assert.txout(ctx.secp_ctx()).script_pubkey,
@@ -176,11 +170,7 @@ pub fn spend_payout(ctx: Context, args: PayoutSpendArgs) -> eyre::Result<()> {
     let operator_pubkey = args.seckey.public_key(ctx.secp_ctx()).x_only_public_key().0;
     let payout = PayoutScript::new(operator_pubkey);
 
-    let assert = AssertTransaction::<
-        { SquareFibonacciScript::<1024>::INPUT_SIZE },
-        { SquareFibonacciScript::<1024>::OUTPUT_SIZE },
-        SquareFibonacciScript<1024>,
-    >::from_scripts(
+    let assert = AssertTransaction::<SquareFibonacciScript<1024>>::from_scripts(
         operator_pubkey,
         payout,
         disprove_scripts,
@@ -264,11 +254,7 @@ pub fn spend_disprove(ctx: Context, args: DisproveSpendArgs) -> eyre::Result<()>
     };
 
     let disprove_script = &disprove_scripts[args.disprove];
-    let tx = &AssertTransaction::<
-        { SquareFibonacciScript::<1024>::INPUT_SIZE },
-        { SquareFibonacciScript::<1024>::OUTPUT_SIZE },
-        SquareFibonacciScript<1024>,
-    >::form_disprove_transactions(
+    let tx = &AssertTransaction::<SquareFibonacciScript<1024>>::form_disprove_transactions(
         payout_script,
         &disprove_scripts,
         ctx.secp_ctx(),

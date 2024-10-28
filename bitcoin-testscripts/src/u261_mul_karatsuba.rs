@@ -2,13 +2,10 @@
 //! for performing the multiplication of two large integers
 //! (exceeding standard Bitcoin 31-bit integers)
 
-use bitcoin_splitter::split::{
-    core::SplitType,
-    script::{IOPair, SplitResult, SplitableScript},
-};
+use bitcoin_splitter::split::script::{IOPair, SplitableScript};
 use bitcoin_utils::treepp::*;
 use bitcoin_window_mul::{
-    bigint::implementation::NonNativeBigIntImpl,
+    bigint::{arithmetics::u29x9::u29x9_mul_karazuba, implementation::NonNativeBigIntImpl},
     traits::integer::{NonNativeInteger, NonNativeLimbInteger},
 };
 
@@ -16,40 +13,43 @@ use num_bigint::{BigUint, RandomBits};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 
-pub type U32 = NonNativeBigIntImpl<32, 29>;
-pub type U64 = NonNativeBigIntImpl<64, 29>;
+pub type U261 = NonNativeBigIntImpl<261, 29>;
+pub type U522 = NonNativeBigIntImpl<522, 29>;
 
 /// Script that performs the addition of two 255-bit numbers
-pub struct U32MulScript;
+pub struct U261MulKaratsubaScript;
 
 /// Input size is double the number of limbs of U254 since we are multiplying two numbers
-const INPUT_SIZE: usize = 2 * U32::N_LIMBS;
+const INPUT_SIZE: usize = 2 * U261::N_LIMBS;
 /// Output size is the number of limbs of U508
-const OUTPUT_SIZE: usize = U64::N_LIMBS;
+const OUTPUT_SIZE: usize = U522::N_LIMBS;
 
-impl SplitableScript<{ INPUT_SIZE }, { OUTPUT_SIZE }> for U32MulScript {
+impl SplitableScript for U261MulKaratsubaScript {
+    const INPUT_SIZE: usize = INPUT_SIZE;
+    const OUTPUT_SIZE: usize = OUTPUT_SIZE;
+
     fn script() -> Script {
-        U32::OP_WIDENINGMUL::<U64>()
+        u29x9_mul_karazuba(0, 1)
     }
 
-    fn generate_valid_io_pair() -> IOPair<{ INPUT_SIZE }, { OUTPUT_SIZE }> {
+    fn generate_valid_io_pair() -> IOPair {
         let mut prng = ChaCha20Rng::seed_from_u64(0);
 
         // Generate two random 254-bit numbers and calculate their sum
-        let num_1: BigUint = prng.sample(RandomBits::new(32));
-        let num_2: BigUint = prng.sample(RandomBits::new(29));
+        let num_1: BigUint = prng.sample(RandomBits::new(254));
+        let num_2: BigUint = prng.sample(RandomBits::new(254));
         let product: BigUint = num_1.clone() * num_2.clone();
 
         IOPair {
             input: script! {
-                { U32::OP_PUSH_U32LESLICE(&num_1.to_u32_digits()) }
-                { U32::OP_PUSH_U32LESLICE(&num_2.to_u32_digits()) }
+                { U261::OP_PUSH_U32LESLICE(&num_1.to_u32_digits()) }
+                { U261::OP_PUSH_U32LESLICE(&num_2.to_u32_digits()) }
             },
-            output: U64::OP_PUSH_U32LESLICE(&product.to_u32_digits()),
+            output: U522::OP_PUSH_U32LESLICE(&product.to_u32_digits()),
         }
     }
 
-    fn generate_invalid_io_pair() -> IOPair<{ INPUT_SIZE }, { OUTPUT_SIZE }> {
+    fn generate_invalid_io_pair() -> IOPair {
         let mut prng = ChaCha20Rng::seed_from_u64(0);
 
         // Generate two random 254-bit numbers and calculate their sum
@@ -63,26 +63,11 @@ impl SplitableScript<{ INPUT_SIZE }, { OUTPUT_SIZE }> for U32MulScript {
 
         IOPair {
             input: script! {
-                { U32::OP_PUSH_U32LESLICE(&num_1.to_u32_digits()) }
-                { U32::OP_PUSH_U32LESLICE(&num_2.to_u32_digits()) }
+                { U261::OP_PUSH_U32LESLICE(&num_1.to_u32_digits()) }
+                { U261::OP_PUSH_U32LESLICE(&num_2.to_u32_digits()) }
             },
-            output: U64::OP_PUSH_U32LESLICE(&product.to_u32_digits()),
+            output: U522::OP_PUSH_U32LESLICE(&product.to_u32_digits()),
         }
-    }
-
-    fn default_split(input: Script, split_type: SplitType) -> SplitResult {
-        Self::split(input, split_type, 370)
-    }
-}
-
-impl U32MulScript {
-    /// Splits the script into shards with a given chunk size
-    pub fn split_with_chunk_size(
-        input: Script,
-        split_type: SplitType,
-        chunk_size: usize,
-    ) -> SplitResult {
-        Self::split(input, split_type, chunk_size)
     }
 }
 
@@ -95,20 +80,21 @@ mod tests {
 
     #[test]
     fn test_verify() {
-        assert!(U32MulScript::verify_random());
+        assert!(U261MulKaratsubaScript::verify_random());
     }
 
     #[test]
     fn test_naive_split_correctness() {
         // Generating a random valid input for the script and the script itself
-        let IOPair { input, output } = U32MulScript::generate_valid_io_pair();
+        let IOPair { input, output } = U261MulKaratsubaScript::generate_valid_io_pair();
         assert!(
-            U32MulScript::verify(input.clone(), output.clone()),
+            U261MulKaratsubaScript::verify(input.clone(), output.clone()),
             "input/output is not correct"
         );
 
         // Splitting the script into shards
-        let split_result = U32MulScript::default_split(input.clone(), SplitType::ByInstructions);
+        let split_result =
+            U261MulKaratsubaScript::default_split(input.clone(), SplitType::ByInstructions);
 
         // Now, we are going to concatenate all the shards and verify that the script is also correct
         let verification_script = script! {
@@ -119,7 +105,7 @@ mod tests {
             { output }
 
             // Now, we need to verify that the output is correct.
-            { OP_LONGEQUALVERIFY(U32MulScript::OUTPUT_SIZE) }
+            { OP_LONGEQUALVERIFY(U261MulKaratsubaScript::OUTPUT_SIZE) }
             OP_TRUE
         };
 
@@ -129,17 +115,11 @@ mod tests {
 
     #[test]
     fn test_naive_split() {
-        const SPLIT_SIZE: usize = 590;
-
-        // Printing the size of the script
-        println!("Size of the script: {} bytes", U32MulScript::script().len());
-
         // First, we generate the pair of input and output scripts
-        let IOPair { input, output } = U32MulScript::generate_valid_io_pair();
+        let IOPair { input, output } = U261MulKaratsubaScript::generate_valid_io_pair();
 
         // Splitting the script into shards
-        let split_result =
-            U32MulScript::split_with_chunk_size(input, SplitType::ByInstructions, SPLIT_SIZE);
+        let split_result = U261MulKaratsubaScript::default_split(input, SplitType::ByInstructions);
 
         for shard in split_result.shards.iter() {
             println!("Shard: {:?}", shard.len());
@@ -158,7 +138,7 @@ mod tests {
         let verification_script = script! {
             { stack_to_script(&last_state.stack) }
             { output }
-            { U64::OP_EQUAL(0, 1) }
+            { U522::OP_EQUAL(0, 1) }
         };
 
         let result = execute_script(verification_script);
@@ -182,10 +162,10 @@ mod tests {
     #[ignore = "too-large computation, run separately"]
     fn test_fuzzy_split() {
         // First, we generate the pair of input and output scripts
-        let IOPair { input, output } = U32MulScript::generate_valid_io_pair();
+        let IOPair { input, output } = U261MulKaratsubaScript::generate_valid_io_pair();
 
         // Splitting the script into shards
-        let split_result = U32MulScript::fuzzy_split(input, SplitType::ByInstructions);
+        let split_result = U261MulKaratsubaScript::fuzzy_split(input, SplitType::ByInstructions);
 
         for shard in split_result.shards.iter() {
             println!("Shard: {:?}", shard.len());
@@ -204,7 +184,7 @@ mod tests {
         let verification_script = script! {
             { stack_to_script(&last_state.stack) }
             { output }
-            { U64::OP_EQUAL(0, 1) }
+            { U522::OP_EQUAL(0, 1) }
         };
 
         let result = execute_script(verification_script);
