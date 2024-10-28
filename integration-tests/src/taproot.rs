@@ -202,7 +202,7 @@ where
         funding_txout,
         funder_address,
         ..
-    } = setup_test::<I, O, S>(APPROX_TXOUT_AMOUNT)?;
+    } = setup_test::<S>(APPROX_TXOUT_AMOUNT)?;
 
     let operator_xonly = OPERATOR_PUBKEY.x_only_public_key().0;
     let (assert_tx, distored_idx) =

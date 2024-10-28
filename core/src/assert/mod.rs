@@ -113,7 +113,8 @@ impl<S: SplitableScript> AssertTransaction<S> {
         options: Options,
         seed: Seed,
     ) -> (Self, usize) {
-        let (disprove_scripts, idx) = form_disprove_scripts_distorted::<S, Seed, Rng>(input.clone());
+        let (disprove_scripts, idx) =
+            form_disprove_scripts_distorted_with_seed::<S, Seed, Rng>(input.clone(), seed);
         let payout_script = PayoutScript::with_locktime(operator_pubkey, options.payout_locktime);
         (
             Self {

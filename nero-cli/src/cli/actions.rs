@@ -44,15 +44,11 @@ pub fn assert_tx(ctx: Context, args: AssertTxArgs) -> eyre::Result<()> {
     let opts = Options::default();
 
     // FIXME(Velnbur): make this optionally valid
-    let (assert, invalid_chunk_idx) = AssertTransaction::<
-        SquareFibonacciScript<1024>,
-    >::with_options_distorted::<[u8; 32], SmallRng>(
-        input_script,
-        args.pubkey,
-        args.amount,
-        opts,
-        [1; 32],
-    );
+    let (assert, invalid_chunk_idx) =
+        AssertTransaction::<SquareFibonacciScript<1024>>::with_options_distorted::<
+            [u8; 32],
+            SmallRng,
+        >(input_script, args.pubkey, args.amount, opts, [1; 32]);
 
     let assert_output_address = Address::from_script(
         &assert.txout(ctx.secp_ctx()).script_pubkey,
