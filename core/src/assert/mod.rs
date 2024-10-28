@@ -27,7 +27,7 @@ pub mod payout_script;
 const DISPROVE_SCRIPT_WEIGHT: u32 = 1;
 const PAYOUT_SCRIPT_WEIGHT: u32 = 5;
 
-pub struct AssertTransaction<const I: usize, const O: usize, S: SplitableScript<I, O>> {
+pub struct AssertTransaction<S: SplitableScript> {
     /// Operator's public key.
     pub operator_pubkey: XOnlyPublicKey,
 
@@ -41,9 +41,7 @@ pub struct AssertTransaction<const I: usize, const O: usize, S: SplitableScript<
     __program: PhantomData<S>,
 }
 
-impl<const I: usize, const O: usize, S: SplitableScript<I, O>> Clone
-    for AssertTransaction<I, O, S>
-{
+impl<S: SplitableScript> Clone for AssertTransaction<S> {
     fn clone(&self) -> Self {
         Self {
             operator_pubkey: self.operator_pubkey,
@@ -67,7 +65,7 @@ impl Default for Options {
     }
 }
 
-impl<const I: usize, const O: usize, S: SplitableScript<I, O>> AssertTransaction<I, O, S> {
+impl<S: SplitableScript> AssertTransaction<S> {
     pub fn from_scripts(
         operator_pubkey: XOnlyPublicKey,
         payout: PayoutScript,
@@ -94,7 +92,7 @@ impl<const I: usize, const O: usize, S: SplitableScript<I, O>> AssertTransaction
         amount: Amount,
         options: Options,
     ) -> Self {
-        let disprove_scripts = form_disprove_scripts::<I, O, S>(input.clone());
+        let disprove_scripts = form_disprove_scripts::<S>(input.clone());
         let payout_script = PayoutScript::with_locktime(operator_pubkey, options.payout_locktime);
         Self {
             operator_pubkey,
@@ -115,8 +113,7 @@ impl<const I: usize, const O: usize, S: SplitableScript<I, O>> AssertTransaction
         options: Options,
         seed: Seed,
     ) -> (Self, usize) {
-        let (disprove_scripts, idx) =
-            form_disprove_scripts_distorted_with_seed::<I, O, S, Seed, Rng>(input.clone(), seed);
+        let (disprove_scripts, idx) = form_disprove_scripts_distorted::<S, Seed, Rng>(input.clone());
         let payout_script = PayoutScript::with_locktime(operator_pubkey, options.payout_locktime);
         (
             Self {

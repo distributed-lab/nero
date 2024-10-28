@@ -10,7 +10,7 @@ use bitcoin_utils::{comparison::OP_LONGEQUALVERIFY, stack_to_script, treepp::*};
 
 /// Structure that represents a pair of input and output scripts. Typically, the prover
 /// wants to prove `script(input) == output`
-pub struct IOPair<const INPUT_SIZE: usize, const OUTPUT_SIZE: usize> {
+pub struct IOPair {
     /// Input script containing the elements which will be fed to the main script
     pub input: Script,
     /// Output script containing the elements which will be compared to the output of the main script
@@ -130,9 +130,16 @@ impl SplitResult {
     ///
     /// **WARNING**: This function is used for testing purposes only, DO NOT ever try to use it in production code.
     pub fn distort(&self) -> (Self, usize) {
+        // Choosing a random shard to distort
         let distorted_shard_id = rand::random::<usize>() % self.shards.len();
+
+        // Getting the current stack (if it is empty, we cannot distort it)
         let current_stack = self.intermediate_states[distorted_shard_id].stack.clone();
         assert!(!current_stack.is_empty(), "Stack must not be empty");
+
+        // Distortion works very simply: take the last element of the stack
+        // and change it to OP_0. This way, the size of the stack will be the same,
+        // but with overwhemling probability, the script will be incorrect.
         let mut new_split_result = self.clone();
         new_split_result.intermediate_states[distorted_shard_id].stack = {
             // Executing a random script and getting the stack
@@ -149,21 +156,23 @@ impl SplitResult {
 }
 
 /// Trait that any script that can be split should implement
-pub trait SplitableScript<const INPUT_SIZE: usize, const OUTPUT_SIZE: usize> {
-    const INPUT_SIZE: usize = INPUT_SIZE;
-    const OUTPUT_SIZE: usize = OUTPUT_SIZE;
+pub trait SplitableScript {
+    /// Number of limbs to represent the input to the script
+    const INPUT_SIZE: usize;
+    /// Number of limbs to represent the output of the script
+    const OUTPUT_SIZE: usize;
 
     /// Returns the main logic (f) of the script
     fn script() -> Script;
 
     /// Generates a random valid input for the script
-    fn generate_valid_io_pair() -> IOPair<INPUT_SIZE, OUTPUT_SIZE>;
+    fn generate_valid_io_pair() -> IOPair;
 
     /// Genreates invalid input for the script
     ///
     /// NOTE: This function is used for testing purposes, specifically
     /// for testing the **Disprove** script.
-    fn generate_invalid_io_pair() -> IOPair<INPUT_SIZE, OUTPUT_SIZE>;
+    fn generate_invalid_io_pair() -> IOPair;
 
     /// Verifies that the input is valid for the script
     fn verify(input: Script, output: Script) -> bool {
@@ -175,7 +184,7 @@ pub trait SplitableScript<const INPUT_SIZE: usize, const OUTPUT_SIZE: usize> {
             // Now, we need to verify that the output is correct.
             // Since the output is not necessarily a single element, we check
             // elements one by one
-            { OP_LONGEQUALVERIFY(OUTPUT_SIZE) }
+            { OP_LONGEQUALVERIFY(Self::OUTPUT_SIZE) }
 
             // If everything was verified correctly, we return true to mark the script as successful
             OP_TRUE

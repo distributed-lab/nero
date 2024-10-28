@@ -171,7 +171,7 @@ impl DisproveScript {
 /// Given the `input` script, [`SplitResult`] and `constructor`, does the following:
 /// - For each shard, creates a DisproveScript using `constructor`
 /// - Returns the list of [`DisproveScript`]s.
-fn disprove_scripts_with_constructor<const INPUT_SIZE: usize, const OUTPUT_SIZE: usize, F>(
+fn disprove_scripts_with_constructor<F>(
     input: Script,
     split_result: SplitResult,
     constructor: F,
@@ -205,19 +205,9 @@ where
 /// - Splits the script into shards
 /// - For each shard, creates a [`DisproveScript`]
 /// - Returns the list of [`DisproveScript`]s
-pub fn form_disprove_scripts<
-    const INPUT_SIZE: usize,
-    const OUTPUT_SIZE: usize,
-    S: SplitableScript<INPUT_SIZE, OUTPUT_SIZE>,
->(
-    input: Script,
-) -> Vec<DisproveScript> {
+pub fn form_disprove_scripts<S: SplitableScript>(input: Script) -> Vec<DisproveScript> {
     let split_result = S::default_split(input.clone(), SplitType::default());
-    disprove_scripts_with_constructor::<INPUT_SIZE, OUTPUT_SIZE, _>(
-        input,
-        split_result,
-        DisproveScript::new,
-    )
+    disprove_scripts_with_constructor(input, split_result, DisproveScript::new)
 }
 
 /// Given the script and its input, does the following:
@@ -226,11 +216,7 @@ pub fn form_disprove_scripts<
 ///   two state transitions incorrect
 /// - For each shard, creates a [`DisproveScript`]
 /// - Returns the list of [`DisproveScript`]s and the index of distorted shard
-pub fn form_disprove_scripts_distorted<
-    const INPUT_SIZE: usize,
-    const OUTPUT_SIZE: usize,
-    S: SplitableScript<INPUT_SIZE, OUTPUT_SIZE>,
->(
+pub fn form_disprove_scripts_distorted<S: SplitableScript>(
     input: Script,
 ) -> (Vec<DisproveScript>, usize) {
     // Splitting the script into shards
@@ -240,11 +226,8 @@ pub fn form_disprove_scripts_distorted<
     let (distorted_split_result, distorted_shard_id) = split_result.distort();
 
     // Creating the disprove scripts
-    let disprove_scripts = disprove_scripts_with_constructor::<INPUT_SIZE, OUTPUT_SIZE, _>(
-        input,
-        distorted_split_result,
-        DisproveScript::new,
-    );
+    let disprove_scripts =
+        disprove_scripts_with_constructor(input, distorted_split_result, DisproveScript::new);
 
     // Returning the result
     (disprove_scripts, distorted_shard_id)
@@ -256,22 +239,19 @@ pub fn form_disprove_scripts_distorted<
 /// - Returns the list of [`DisproveScript`]s
 ///
 /// The randomness is derived from the `seed`.
-pub fn form_disprove_scripts_with_seed<
-    const INPUT_SIZE: usize,
-    const OUTPUT_SIZE: usize,
-    S: SplitableScript<INPUT_SIZE, OUTPUT_SIZE>,
-    Seed: Sized + Default + AsMut<[u8]> + Copy,
-    Rng: rand::SeedableRng<Seed = Seed> + rand::Rng,
->(
+pub fn form_disprove_scripts_with_seed<S, Seed, Rng>(
     input: Script,
     seed: Seed,
-) -> Vec<DisproveScript> {
+) -> Vec<DisproveScript>
+where
+    S: SplitableScript,
+    Seed: Sized + Default + AsMut<[u8]> + Copy,
+    Rng: rand::SeedableRng<Seed = Seed> + rand::Rng,
+{
     let split_result = S::default_split(input.clone(), SplitType::default());
-    disprove_scripts_with_constructor::<INPUT_SIZE, OUTPUT_SIZE, _>(
-        input,
-        split_result,
-        |from, to, shard| DisproveScript::new_with_seed::<Seed, Rng>(from, to, shard, seed),
-    )
+    disprove_scripts_with_constructor(input, split_result, |from, to, shard| {
+        DisproveScript::new_with_seed::<Seed, Rng>(from, to, shard, seed)
+    })
 }
 
 /// Given the script and its input, does the following:
@@ -282,16 +262,15 @@ pub fn form_disprove_scripts_with_seed<
 /// - Returns the list of [`DisproveScript`]s and the index of distorted shard
 ///
 /// The randomness is derived from the `seed`.
-pub fn form_disprove_scripts_distorted_with_seed<
-    const INPUT_SIZE: usize,
-    const OUTPUT_SIZE: usize,
-    S: SplitableScript<INPUT_SIZE, OUTPUT_SIZE>,
-    Seed: Sized + Default + AsMut<[u8]> + Copy,
-    Rng: rand::SeedableRng<Seed = Seed> + rand::Rng,
->(
+pub fn form_disprove_scripts_distorted_with_seed<S, Seed, Rng>(
     input: Script,
     seed: Seed,
-) -> (Vec<DisproveScript>, usize) {
+) -> (Vec<DisproveScript>, usize)
+where
+    S: SplitableScript,
+    Seed: Sized + Default + AsMut<[u8]> + Copy,
+    Rng: rand::SeedableRng<Seed = Seed> + rand::Rng,
+{
     // Splitting the script into shards
     let split_result = S::default_split(input.clone(), SplitType::default());
 
@@ -299,11 +278,10 @@ pub fn form_disprove_scripts_distorted_with_seed<
     let (distorted_split_result, distorted_shard_id) = split_result.distort();
 
     // Creating the disprove scripts
-    let disprove_scripts = disprove_scripts_with_constructor::<INPUT_SIZE, OUTPUT_SIZE, _>(
-        input,
-        distorted_split_result,
-        |from, to, shard| DisproveScript::new_with_seed::<Seed, Rng>(from, to, shard, seed),
-    );
+    let disprove_scripts =
+        disprove_scripts_with_constructor(input, distorted_split_result, |from, to, shard| {
+            DisproveScript::new_with_seed::<Seed, Rng>(from, to, shard, seed)
+        });
 
     // Returning the result
     (disprove_scripts, distorted_shard_id)

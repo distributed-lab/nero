@@ -22,17 +22,17 @@ pub type U64 = NonNativeBigIntImpl<64, 29>;
 /// Script that performs the addition of two 255-bit numbers
 pub struct U32MulScript;
 
-/// Input size is double the number of limbs of U254 since we are multiplying two numbers
-const INPUT_SIZE: usize = 2 * U32::N_LIMBS;
-/// Output size is the number of limbs of U508
-const OUTPUT_SIZE: usize = U64::N_LIMBS;
+impl SplitableScript for U32MulScript {
+    /// Input size is double the number of limbs of U254 since we are multiplying two numbers
+    const INPUT_SIZE: usize = 2 * U32::N_LIMBS;
+    /// Output size is the number of limbs of U508
+    const OUTPUT_SIZE: usize = U64::N_LIMBS;
 
-impl SplitableScript<{ INPUT_SIZE }, { OUTPUT_SIZE }> for U32MulScript {
     fn script() -> Script {
         U32::OP_WIDENINGMUL::<U64>()
     }
 
-    fn generate_valid_io_pair() -> IOPair<{ INPUT_SIZE }, { OUTPUT_SIZE }> {
+    fn generate_valid_io_pair() -> IOPair {
         let mut prng = ChaCha20Rng::seed_from_u64(0);
 
         // Generate two random 254-bit numbers and calculate their sum
@@ -49,7 +49,7 @@ impl SplitableScript<{ INPUT_SIZE }, { OUTPUT_SIZE }> for U32MulScript {
         }
     }
 
-    fn generate_invalid_io_pair() -> IOPair<{ INPUT_SIZE }, { OUTPUT_SIZE }> {
+    fn generate_invalid_io_pair() -> IOPair {
         let mut prng = ChaCha20Rng::seed_from_u64(0);
 
         // Generate two random 254-bit numbers and calculate their sum

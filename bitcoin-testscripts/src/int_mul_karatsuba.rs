@@ -24,12 +24,15 @@ const INPUT_SIZE: usize = 2 * U261::N_LIMBS;
 /// Output size is the number of limbs of U508
 const OUTPUT_SIZE: usize = U522::N_LIMBS;
 
-impl SplitableScript<{ INPUT_SIZE }, { OUTPUT_SIZE }> for U261MulKaratsubaScript {
+impl SplitableScript for U261MulKaratsubaScript {
+    const INPUT_SIZE: usize = INPUT_SIZE;
+    const OUTPUT_SIZE: usize = OUTPUT_SIZE;
+
     fn script() -> Script {
         u29x9_mul_karazuba(0, 1)
     }
 
-    fn generate_valid_io_pair() -> IOPair<{ INPUT_SIZE }, { OUTPUT_SIZE }> {
+    fn generate_valid_io_pair() -> IOPair {
         let mut prng = ChaCha20Rng::seed_from_u64(0);
 
         // Generate two random 254-bit numbers and calculate their sum
@@ -46,7 +49,7 @@ impl SplitableScript<{ INPUT_SIZE }, { OUTPUT_SIZE }> for U261MulKaratsubaScript
         }
     }
 
-    fn generate_invalid_io_pair() -> IOPair<{ INPUT_SIZE }, { OUTPUT_SIZE }> {
+    fn generate_invalid_io_pair() -> IOPair {
         let mut prng = ChaCha20Rng::seed_from_u64(0);
 
         // Generate two random 254-bit numbers and calculate their sum

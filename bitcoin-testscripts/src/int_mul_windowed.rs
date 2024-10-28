@@ -21,12 +21,15 @@ const INPUT_SIZE: usize = 2 * U254Windowed::N_LIMBS;
 /// Output size is the number of limbs of U508
 const OUTPUT_SIZE: usize = U508::N_LIMBS;
 
-impl SplitableScript<{ INPUT_SIZE }, { OUTPUT_SIZE }> for U254MulScript {
+impl SplitableScript for U254MulScript {
+    const INPUT_SIZE: usize = INPUT_SIZE;
+    const OUTPUT_SIZE: usize = OUTPUT_SIZE;
+
     fn script() -> Script {
         U254Windowed::OP_WIDENINGMUL::<U508>()
     }
 
-    fn generate_valid_io_pair() -> IOPair<{ INPUT_SIZE }, { OUTPUT_SIZE }> {
+    fn generate_valid_io_pair() -> IOPair {
         let mut prng = ChaCha20Rng::seed_from_u64(0);
 
         // Generate two random 254-bit numbers and calculate their sum
@@ -43,7 +46,7 @@ impl SplitableScript<{ INPUT_SIZE }, { OUTPUT_SIZE }> for U254MulScript {
         }
     }
 
-    fn generate_invalid_io_pair() -> IOPair<{ INPUT_SIZE }, { OUTPUT_SIZE }> {
+    fn generate_invalid_io_pair() -> IOPair {
         let mut prng = ChaCha20Rng::seed_from_u64(0);
 
         // Generate two random 254-bit numbers and calculate their sum

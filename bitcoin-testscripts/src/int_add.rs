@@ -21,17 +21,17 @@ use rand_chacha::ChaCha20Rng;
 /// Script that performs the addition of two 254-bit numbers
 pub struct U254AddScript;
 
-/// Input size is double the number of limbs of U254 since we are adding two numbers
-const INPUT_SIZE: usize = 2 * U254::N_LIMBS;
-/// Output size is the number of limbs of U254
-const OUTPUT_SIZE: usize = U254::N_LIMBS;
+impl SplitableScript for U254AddScript {
+    /// Input size is double the number of limbs of U254 since we are adding two numbers
+    const INPUT_SIZE: usize = 2 * U254::N_LIMBS;
+    /// Output size is the number of limbs of U254
+    const OUTPUT_SIZE: usize = U254::N_LIMBS;
 
-impl SplitableScript<{ INPUT_SIZE }, { OUTPUT_SIZE }> for U254AddScript {
     fn script() -> Script {
         U254::OP_ADD(1, 0)
     }
 
-    fn generate_valid_io_pair() -> IOPair<{ INPUT_SIZE }, { OUTPUT_SIZE }> {
+    fn generate_valid_io_pair() -> IOPair {
         let mut prng = ChaCha20Rng::seed_from_u64(0);
 
         // Generate two random 254-bit numbers and calculate their sum
@@ -48,7 +48,7 @@ impl SplitableScript<{ INPUT_SIZE }, { OUTPUT_SIZE }> for U254AddScript {
         }
     }
 
-    fn generate_invalid_io_pair() -> IOPair<{ INPUT_SIZE }, { OUTPUT_SIZE }> {
+    fn generate_invalid_io_pair() -> IOPair {
         let mut prng = ChaCha20Rng::seed_from_u64(0);
 
         // Generate two random 254-bit numbers and calculate their sum
