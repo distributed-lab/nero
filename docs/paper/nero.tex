@@ -162,14 +162,14 @@ Now, we define the \textit{public verifiable computation scheme} as follows:
 \begin{definition}
   A public verifiable computation (VC) scheme $\Pi_{\text{VC}}$ consists of three probabilistic polynomial-time algorithms:
   \begin{itemize}
-    \item $\mathsf{Gen}(f,1^{\lambda})$: a randomized algorithm, taking the
+    \item $\textsc{Gen}(f,1^{\lambda})$: a randomized algorithm, taking the
     security parameter $\lambda \in \mathbb{N}$ and the function $f$ as input,
     and outputting the prover and verifier parameters $\mathsf{pp}$ and
     $\mathsf{vp}$.
-    \item $\mathsf{Compute}(\mathsf{pp}, x)$: a deterministic algorithm, taking
+    \item $\textsc{Compute}(\mathsf{pp}, x)$: a deterministic algorithm, taking
     the prover parameters $\mathsf{pp}$ and the input $x$, and outputting the
     output $y$ together with a ``proof of computation'' $\pi$.
-    \item $\mathsf{Verify}(\mathsf{vp}, x, y, \pi)$: given the verifier
+    \item $\textsc{Verify}(\mathsf{vp}, x, y, \pi)$: given the verifier
     parameters $\mathsf{vp}$, the input $x$, the output $y$, and the proof
     $\pi$, the algorithm outputs $\mathsf{accept}$ or $\mathsf{reject}$ based on
     the correctness of the computation.
@@ -424,11 +424,11 @@ composition of function $f$ with itself $k$ times: $f^{(k)}(x) = \underbrace{f
   The \textbf{Winternitz Signature Scheme} over parameters $(k,d)$ with a hash
   function $H: \mathcal{X} \to \mathcal{X}$ is defined as follows:
   \begin{itemize}
-    \item $\mathsf{Gen}(1^{\lambda})$: secret key is generated as a tuple
+    \item $\textsc{Gen}(1^{\lambda})$: secret key is generated as a tuple
       $(x_1,\dots,x_k) \xleftarrow{R} \mathcal{X}$, while the public key is
       $(y_1,\dots,y_k)$, where $y_j = H^{(d)}(x_j)$ for each $j \in
       \{1,\dots,k\}$.
-    \item $\mathsf{Sign}(m,\mathsf{sk})$: denote by $\mathcal{I}_{d,k} :=
+    \item $\textsc{Sign}(m,\mathsf{sk})$: denote by $\mathcal{I}_{d,k} :=
       {(\{0,\dots,d\})}^k$ and suppose we have an encoding function
       $\mathsf{Enc}: \mathcal{M} \to \mathcal{I}_{d,k}$ that translates a
       message $m \in \mathcal{M} = {\{0,1\}}^{\ell}$ to the element in space
@@ -437,7 +437,7 @@ composition of function $f$ with itself $k$ times: $f^{(k)}(x) = \underbrace{f
       \begin{equation*}
         \sigma \gets ({H}^{(e_1)}(x_1), H^{(e_2)}(x_2), \dots, H^{(e_k)}(x_k))
       \end{equation*}
-    \item $\mathsf{Verify}(\sigma,m,\mathsf{pk})$: to verify $\sigma =
+    \item $\textsc{Verify}(\sigma,m,\mathsf{pk})$: to verify $\sigma =
       (\sigma_1,\dots,\sigma_k)$ on $m \in \mathcal{M}$ and
       $\mathsf{pk}=(y_1,\dots,y_k)$, first compute encoding $(e_1,\dots,e_k)
       \gets \mathsf{Enc}(m)$ and then check whether:
