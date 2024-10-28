@@ -93,48 +93,86 @@ Dmytro Zakharov\inst{1}}
 Optimistic Verification, BitVM2}
 
 \begin{abstract}
-  One of Bitcoin's biggest unresolved challenges is the ability to execute 
-  a large arbitrary program on-chain. Namely, publishing a program written in 
-  Bitcoin Script that exceeds 4 MB is practically impossible. 
-  This is a strict restriction as, for instance, it 
-  is impossible to multiply two large integers, 
-  not even mentioning a zero-knowledge proof verifier. To
-  address this issue, we narrow down the problem to the verifiable computation
-  which is more feasible given the current state of Bitcoin.
+  One of Bitcoin's biggest unresolved challenges is the ability to execute a
+  large arbitrary program on-chain. Namely, publishing a program written in
+  Bitcoin Script that exceeds 4 MB is practically impossible. This is a strict
+  restriction as, for instance, it is impossible to multiply two large integers,
+  not even mentioning a zero-knowledge proof verifier. To address this issue, we
+  narrow down the problem to the verifiable computation which is more feasible
+  given the current state of Bitcoin.
 
-  One of the ways to do it is the BitVM2 protocol. Based on it, we are aiming to create a generic library for the on-chain verifiable computations. This document is designated to state our progress, pitfalls, and pain\ldots While most of the current efforts are put into transferring the \textit{Groth16} verifier on-chain with the main focus on implementing bridge, we try to solve a broader problem, enabling a more significant number of potential use cases (including zero-knowledge proofs verification).
+  One of the ways to do it is the BitVM2 protocol. Based on it, we are aiming to
+  create a generic library for the on-chain verifiable computations. This
+  document is designated to state our progress, pitfalls, and pain\ldots While
+  most of the current efforts are put into transferring the \textit{Groth16}
+  verifier on-chain with the main focus on implementing bridge, we try to solve
+  a broader problem, enabling a more significant number of potential use cases
+  (including zero-knowledge proofs verification).
 \end{abstract}
 
 \setcounter{tocdepth}{2}
 \tableofcontents
 
 \begin{tcolorbox}[colback=green!15!white, halign title=flush center, colframe=green!70!black, fonttitle=\bfseries\large, title=Note, sharp corners]
-  \centering This is a very early version of the paper, development is still in active progress!
+  \centering This is a very early version of the paper, development is still in
+  active progress!
 \end{tcolorbox}
 
 \section{Introduction}\label{sec:intro}
 
-The Bitcoin Network \autocite{bitcoin_paper} is rapidly growing. However, the Bitcoin Script, the native programming language of Bitcoin, imposes strict size limits on transactions --- only 4 MB are allowed, making it challenging to implement any advanced cryptographic (and not only) primitives, among which highly desirable zero-knowledge proofs verification on-chain. To address this limitation, the BitVM2 \autocite{bitvm2} proposal introduces an innovative approach that enables the optimistic execution of large programs on the Bitcoin chain. 
+The Bitcoin Network \autocite{bitcoin_paper} is rapidly growing. However, the
+Bitcoin Script, the native programming language of Bitcoin, imposes strict size
+limits on transactions --- only 4 MB are allowed, making it challenging to
+implement any advanced cryptographic (and not only) primitives, among which
+highly desirable zero-knowledge proofs verification on-chain. To address this
+limitation, the BitVM2 \autocite{bitvm2} proposal introduces an innovative
+approach that enables the optimistic execution of large programs on the Bitcoin
+chain. 
 
-The proposed method suggests that the executor (which is called an \textbf{operator}) splits the large program into smaller chunks (which we further refer to as \textbf{shards}) and commits to the intermediate values. This way, if the computation is incorrect, it must be incorrect in some shard, and it can be proven \textit{concisely} due to the splitting mechanism.
+The proposed method suggests that the executor (which is called an
+\textbf{operator}) splits the large program into smaller chunks (which we
+further refer to as \textbf{shards}) and commits to the intermediate values.
+This way, if the computation is incorrect, it must be incorrect in some shard,
+and it can be proven \textit{concisely} due to the splitting mechanism.
 
-This document provides a concise overview of our progress in implementing the library for generic, optimistic, verifiable computation on Bitcoin. Currently, we are focusing on reproducing the BitVM2 paper approach while not limiting the function and input/output format as much as possible.
+This document provides a concise overview of our progress in implementing the
+library for generic, optimistic, verifiable computation on Bitcoin. Currently,
+we are focusing on reproducing the BitVM2 paper approach while not limiting the
+function and input/output format as much as possible.
 
 \section{Program Split}\label{sec:program-splitting}
 
 \subsection{Public Verifiable Computation}
 
-Since the main goal of our research is to build the \textit{public verifiable computation}, it is reasonable to start with a brief overview of this concept. A \textit{public verifiable computation scheme} allows the (potentially) computationally limited verifier $\mathcal{V}$ outsource the evaluation of some function $f$ on input $x$ to the prover (worker) $\mathcal{P}$. Then, $\mathcal{V}$ can verify the correctness of the provided output $y$ by performing significantly less work than $f$ requires. 
+Since the main goal of our research is to build the \textit{public verifiable
+computation}, it is reasonable to start with a brief overview of this concept. A
+\textit{public verifiable computation scheme} allows the (potentially)
+computationally limited verifier $\mathcal{V}$ outsource the evaluation of some
+function $f$ on input $x$ to the prover (worker) $\mathcal{P}$. Then,
+$\mathcal{V}$ can verify the correctness of the provided output $y$ by
+performing significantly less work than $f$ requires. 
 
-In the context of Bitcoin on-chain verification, $\mathcal{V}$ can be viewed as the Bitcoin smart contract which is heavily limited in computational resources (due to the inherit Bitcoin Script inexpressiveness). The prover $\mathcal{P}$ is the operator who executes the program on-chain. The program $f$ is the Bitcoin Script, and the input $x$ is the data provided by the operator. 
+In the context of Bitcoin on-chain verification, $\mathcal{V}$ can be viewed as
+the Bitcoin smart contract which is heavily limited in computational resources
+(due to the inherit Bitcoin Script inexpressiveness). The prover $\mathcal{P}$
+is the operator who executes the program on-chain. The program $f$ is the
+Bitcoin Script, and the input $x$ is the data provided by the operator. 
 
 Now, we define the \textit{public verifiable computation scheme} as follows:
 \begin{definition}
   A public verifiable computation (VC) scheme $\Pi_{\text{VC}}$ consists of three probabilistic polynomial-time algorithms:
   \begin{itemize}
-    \item $\mathsf{Gen}(f,1^{\lambda})$: a randomized algorithm, taking the security parameter $\lambda \in \mathbb{N}$ and the function $f$ as input, and outputting the prover and verifier parameters $\mathsf{pp}$ and $\mathsf{vp}$.
-    \item $\mathsf{Compute}(\mathsf{pp}, x)$: a deterministic algorithm, taking the prover parameters $\mathsf{pp}$ and the input $x$, and outputting the output $y$ together with a ``proof of computation'' $\pi$.
-    \item $\mathsf{Verify}(\mathsf{vp}, x, y, \pi)$: given the verifier parameters $\mathsf{vp}$, the input $x$, the output $y$, and the proof $\pi$, the algorithm outputs $\mathsf{accept}$ or $\mathsf{reject}$ based on the correctness of the computation.
+    \item $\mathsf{Gen}(f,1^{\lambda})$: a randomized algorithm, taking the
+    security parameter $\lambda \in \mathbb{N}$ and the function $f$ as input,
+    and outputting the prover and verifier parameters $\mathsf{pp}$ and
+    $\mathsf{vp}$.
+    \item $\mathsf{Compute}(\mathsf{pp}, x)$: a deterministic algorithm, taking
+    the prover parameters $\mathsf{pp}$ and the input $x$, and outputting the
+    output $y$ together with a ``proof of computation'' $\pi$.
+    \item $\mathsf{Verify}(\mathsf{vp}, x, y, \pi)$: given the verifier
+    parameters $\mathsf{vp}$, the input $x$, the output $y$, and the proof
+    $\pi$, the algorithm outputs $\mathsf{accept}$ or $\mathsf{reject}$ based on
+    the correctness of the computation.
   \end{itemize}
 
   Such scheme should satisfy the following properties (informally):
@@ -146,56 +184,88 @@ Now, we define the \textit{public verifiable computation scheme} as follows:
         (y,\pi) \gets \mathsf{Compute}(\mathsf{pp},x)
       \end{matrix}\right] = 1
     \end{equation*}
-    \item \textbf{Security}. For any function $f$ and any probabilistic polynomial-time adversary $\mathcal{A}$, 
+    \item \textbf{Security}. For any function $f$ and any probabilistic
+    polynomial-time adversary $\mathcal{A}$, 
     \begin{equation*}
       \text{Pr}\left[\mathsf{Verify}(\mathsf{vp}, \widetilde{x}, \widetilde{y}, \widetilde{\pi}) = \mathsf{accept}\; \Big| \; \begin{matrix}
         (\mathsf{pp},\mathsf{vp}) \gets \mathsf{Gen}(f,1^{\lambda}) \\
         (\widetilde{x}, \widetilde{y}, \widetilde{\pi}) \gets \mathcal{A}(\mathsf{pp}, \mathsf{vp}), \; f(\widetilde{x}) \neq \widetilde{y}
       \end{matrix}\right] \leq \mathsf{negl}(\lambda)
     \end{equation*}
-    \item \textbf{Efficiency}. $\mathsf{Verify}$ should be much cheaper than the evaluation of $f$.
+    \item \textbf{Efficiency}. $\mathsf{Verify}$ should be much cheaper than the
+    evaluation of $f$.
   \end{itemize}
 \end{definition}
 
 \subsection{Motivation for Verifiable Computation on Bitcoin}
-Suppose we have a large program $f$ implemented inside the Bitcoin Script and want to verify its execution on-chain. Suppose the prover $\mathcal{P}$ claims that ${y} = f({x})$ for published ${x}$ and ${y}$. Some of the examples include:
+Suppose we have a large program $f$ implemented inside the Bitcoin Script and
+want to verify its execution on-chain. Suppose the prover $\mathcal{P}$ claims
+that ${y} = f({x})$ for published ${x}$ and ${y}$. Some of the examples include:
 \begin{itemize}
-    \item \textbf{Field multiplication}: $f(a,b) = a \times b$ for $a,b \in \mathbb{F}_p$. Here, the input ${x}=(a,b) \in \mathbb{F}_p^2$ is a tuple of two field elements, while the output $y \in \mathbb{F}_p$ is a single field element.
-    \item \textbf{EC points addition}: $f(x_1,y_1,x_2,y_2) = (x_1,y_1) \oplus (x_2,y_2) = (x_3,y_3)$. Input is a tuple $(x_1,y_1,x_2,y_2)$ of four field elements, representing the coordinates of two elliptic curve points. The output is a point $(x_3,y_3)$, represented by two field elements $\mathbb{F}_p$.
-    \item \textbf{Groth16 verifier}: $f(\pi_1,\pi_2,\pi_3) = b$ for $b \in \{\mathsf{accept}, \mathsf{reject}\}$. Based on three provided points $\pi_1$,$\pi_2$,$\pi_3$, representing the proof, decide whether the proof is valid.
+    \item \textbf{Field multiplication}: $f(a,b) = a \times b$ for $a,b \in
+    \mathbb{F}_p$. Here, the input ${x}=(a,b) \in \mathbb{F}_p^2$ is a tuple of
+    two field elements, while the output $y \in \mathbb{F}_p$ is a single field
+    element.
+    \item \textbf{EC points addition}: $f(x_1,y_1,x_2,y_2) = (x_1,y_1) \oplus
+    (x_2,y_2) = (x_3,y_3)$. Input is a tuple $(x_1,y_1,x_2,y_2)$ of four field
+    elements, representing the coordinates of two elliptic curve points. The
+    output is a point $(x_3,y_3)$, represented by two field elements
+    $\mathbb{F}_p$.
+    \item \textbf{Groth16 verifier}: $f(\pi_1,\pi_2,\pi_3) = b$ for $b \in
+    \{\mathsf{accept}, \mathsf{reject}\}$. Based on three provided points
+    $\pi_1$,$\pi_2$,$\pi_3$, representing the proof, decide whether the proof is
+    valid.
 \end{itemize}
 
-As mentioned before, publishing $f$ entirely on-chain is not an option. Instead, the BitVM2 paper suggests splitting the program into shards $f_1,\dots,f_n$ such that $f=f_n \circ f_{n-1} \circ \dots \circ f_1$, where $\circ$ denotes the function composition. This way, both the prover $\mathcal{P}$ and verifier $\mathcal{V}$ can calculate all intermediate results as follows:
+As mentioned before, publishing $f$ entirely on-chain is not an option. Instead,
+the BitVM2 paper suggests splitting the program into shards $f_1,\dots,f_n$ such
+that $f=f_n \circ f_{n-1} \circ \dots \circ f_1$, where $\circ$ denotes the
+function composition. This way, both the prover $\mathcal{P}$ and verifier
+$\mathcal{V}$ can calculate all intermediate results as follows:
 \begin{equation*}
     {z}_j = f_j({z}_{j-1}), \; \text{for each $j \in \{1,\dots,n\}$}
 \end{equation*}
 
-Of course, we additionally set ${z}_0 := {x}$. If everything was computed correctly and the function was split into shards correctly, eventually, we will have ${z}_n = {y}$.  
+Of course, we additionally set ${z}_0 := {x}$. If everything was computed
+correctly and the function was split into shards correctly, eventually, we will
+have ${z}_n = {y}$.  
 
-So recall that $\mathcal{P}$ (referred to in BitVM2 as the \textit{operator}) only needs to prove that the given program $f$ indeed returns ${y}$ for \({x}\), otherwise \textbf{anyone can disprove this fact}. In our case, this means giving challengers (essentially, being verifiers $\mathcal{V}$) the ability to prove that at least one of the sub-program statements \(f_j({z}_{j-1}) = {z}_j\) is false.
+So recall that $\mathcal{P}$ (referred to in BitVM2 as the \textit{operator})
+only needs to prove that the given program $f$ indeed returns ${y}$ for \({x}\),
+otherwise \textbf{anyone can disprove this fact}. In our case, this means giving
+challengers (essentially, being verifiers $\mathcal{V}$) the ability to prove
+that at least one of the sub-program statements \(f_j({z}_{j-1}) = {z}_j\) is
+false.
 
 So overall, the idea of BitVM2 can be described as follows:
 \begin{enumerate}
-    \item The program $f$ is decomposed into shards $f_1,\dots,f_n$ of reasonable size\footnote{By ``size'' we mean the number of \texttt{OP\_CODES} needed to represent the logic.}.
-    \item $\mathcal{P}$ executes $f$ on input ${x}$ shard by shard, obtaining intermediate steps ${z}_1,\dots,{z}_n$.
-    \item $\mathcal{P}$ commits to the given intermediate steps and publishes commitments on-chain.
-    \item $\mathcal{V}$, knowing ${x}$ published by $\mathcal{P}$, executes the same program, obtaining his own states $\widetilde{z}_1,\dots,\widetilde{z}_n$.
-    \item $\mathcal{V}$ checks whether $\widetilde{z}_j = z_j$. If this does not hold, the verifier publishes transactions corresponding to the disprove statement $z_j \neq f_j(z_{j-1})$ and claims funds.
+    \item The program $f$ is decomposed into shards $f_1,\dots,f_n$ of
+    reasonable size\footnote{By ``size'' we mean the number of
+    \texttt{OP\_CODES} needed to represent the logic.}.
+    \item $\mathcal{P}$ executes $f$ on input ${x}$ shard by shard, obtaining
+    intermediate steps ${z}_1,\dots,{z}_n$.
+    \item $\mathcal{P}$ commits to the given intermediate steps and publishes
+    commitments on-chain.
+    \item $\mathcal{V}$, knowing ${x}$ published by $\mathcal{P}$, executes the
+    same program, obtaining his own states
+    $\widetilde{z}_1,\dots,\widetilde{z}_n$.
+    \item $\mathcal{V}$ checks whether $\widetilde{z}_j = z_j$. If this does not
+    hold, the verifier publishes transactions corresponding to the disprove
+    statement $z_j \neq f_j(z_{j-1})$ and claims funds.
 \end{enumerate}
 
 \subsection{Implementation on Bitcoin}
 
-This does not sound very hard; however, 
-implementing this in Bitcoin is not obvious. 
-The good news is that Bitcoin is a stack-based language, 
-so the function $f$ is just a string, 
-where each word is the \texttt{OP\_CODE}. Notice that, 
-in the stack-based languages, the concatenation 
-$f_1 \parallel f_2$ of two \textit{valid} functions 
-$f_1$ and $f_2$ is the same thing as their composition. 
-In other words, executing the script \script{\elem{x} \elem{f_1} \elem{f_2}}
-is the same as calculating composition $f_2 \circ f_1(x)$. 
-So all what remains is finding \textit{valid} $f_1,\dots,f_n$ such that $f = f_1 \parallel f_{2} \parallel \dots \parallel f_n$. All the intermediate steps $\{z_j\}_{0 \leq j \leq n}$ can be calculated as specified in \Cref{alg:intermediate_steps}.
+This does not sound very hard; however, implementing this in Bitcoin is not
+obvious. The good news is that Bitcoin is a stack-based language, so the
+function $f$ is just a string, where each word is the \texttt{OP\_CODE}. Notice
+that, in the stack-based languages, the concatenation $f_1 \parallel f_2$ of two
+\textit{valid} functions $f_1$ and $f_2$ is the same thing as their composition.
+In other words, executing the script \script{\elem{x} \elem{f_1} \elem{f_2}} is
+the same as calculating composition $f_2 \circ f_1(x)$. So all what remains is
+finding \textit{valid} $f_1,\dots,f_n$ such that $f = f_1 \parallel f_{2}
+\parallel \dots \parallel f_n$. All the intermediate steps $\{z_j\}_{0 \leq j
+\leq n}$ can be calculated as specified in \Cref{alg:intermediate_steps}.
 
 \begin{algorithm}[H]
 \caption{Calculating intermediate steps from script shard decomposition}
@@ -212,39 +282,83 @@ Decompose $f$ into shards: $(f_1,\dots,f_n) \gets \mathsf{Decompose}(f)$;
 \label{alg:intermediate_steps}
 \end{algorithm}
 
-Bad news is that $\mathsf{Decompose}$ function is quite tricky to implement. Namely, we believe that there are several issues:
+Bad news is that $\mathsf{Decompose}$ function is quite tricky to implement.
+Namely, we believe that there are several issues:
 \begin{itemize}
-    \item Decomposition must be valid, meaning each $f_j$ must be valid itself. For example, $f_j$ cannot contain unclosed \texttt{OP\_IF}'s. This issue is easily fixed through a careful implementation of the splitting mechanism: for instance, whenever the number of \texttt{OP\_IF}'s and $\texttt{OP\_NOTIF}$'s is not equal to the number of \texttt{OP\_ENDIF}'s, we continue the current shard until the balance is restored.
-    \item Despite that each $f_j$ might be small, not necessarily $z_j$ is. In other words, optimizing the size of each $f_j$ does not result in optimizing the size of $z_j$. Moreover, in the further sections, we show that optimizing the size of intermediate states is, in fact, a much more tricky and fundamental issue than optimizing the shards' sizes. In other words, we should find a balance between the size of $f_j$ and the size of $z_j$.
-    \item Some of $z_j$'s might contain the same repetitive pieces: for example, the lookup table for certain algorithms or the number binary/$w$-width decomposition for arithmetic. We believe that there must be an optimal method to store commitments.
+    \item Decomposition must be valid, meaning each $f_j$ must be valid itself.
+    For example, $f_j$ cannot contain unclosed \texttt{OP\_IF}'s. This issue is
+    easily fixed through a careful implementation of the splitting mechanism:
+    for instance, whenever the number of \texttt{OP\_IF}'s and
+    $\texttt{OP\_NOTIF}$'s is not equal to the number of \texttt{OP\_ENDIF}'s,
+    we continue the current shard until the balance is restored.
+    \item Despite that each $f_j$ might be small, not necessarily $z_j$ is. In
+    other words, optimizing the size of each $f_j$ does not result in optimizing
+    the size of $z_j$. Moreover, in the further sections, we show that
+    optimizing the size of intermediate states is, in fact, a much more tricky
+    and fundamental issue than optimizing the shards' sizes. In other words, we
+    should find a balance between the size of $f_j$ and the size of $z_j$.
+    \item Some of $z_j$'s might contain the same repetitive pieces: for example,
+    the lookup table for certain algorithms or the number binary/$w$-width
+    decomposition for arithmetic. We believe that there must be an optimal
+    method to store commitments.
 \end{itemize}
 
-However, the default version proceeds as follows: suppose our script is of form $f = \{ \elem{s_1} \elem{s_2} \ldots \elem{s_k} \}$ where $\elem{s_j}$ is either an \texttt{OP\_CODE} or an element in the stack (added via, for example, \texttt{OP\_PUSHBYTES}). Then, we start splitting the program from left to right and if the size of the current shard exceeds the limit (say, $L$), we stop and start a new shard. The only exception when we cannot stop is unclosed \texttt{OP\_IF} and \texttt{OP\_NOTIF}. This way, approximately, we will have $\lceil k/L \rceil$ shards each of size $L$.
+However, the default version proceeds as follows: suppose our script is of form
+$f = \{ \elem{s_1} \elem{s_2} \ldots \elem{s_k} \}$ where $\elem{s_j}$ is either
+an \texttt{OP\_CODE} or an element in the stack (added via, for example,
+\texttt{OP\_PUSHBYTES}). Then, we start splitting the program from left to right
+and if the size of the current shard exceeds the limit (say, $L$), we stop and
+start a new shard. The only exception when we cannot stop is unclosed
+\texttt{OP\_IF} and \texttt{OP\_NOTIF}. This way, approximately, we will have
+$\lceil k/L \rceil$ shards each of size $L$.
 
 \subsubsection{Fuzzy Search}
 
-The basic version, though, does not guarantee the optimal intermediate stack sizes. One of the proposals to improve the splitting mechanism is to make program automatically choose the optimal size. In other words, we make the parameter $L$ variable and try to find the optimal $L$ that minimizes the certain ``metric''. What is this metric?
+The basic version, though, does not guarantee the optimal intermediate stack
+sizes. One of the proposals to improve the splitting mechanism is to make
+program automatically choose the optimal size. In other words, we make the
+parameter $L$ variable and try to find the optimal $L$ that minimizes the
+certain ``metric''. What is this metric?
 
-Since we want to potentially disprove the equality $z_{j+1} = f_j(z_j)$, the cost of such disproof is the total size of $z_j$, $z_{j+1}$ and the shard $f_j$. Denote the size of the script/state by $|\star|$. Then, we want to minimize some sort of ``average'' of $\alpha(|z_j| + |z_{j+1}|) + |f_j|$. The factor $\alpha$ is introduced since, besides the cost of storing $z_j$, we also need to \textit{commit} to these values which, as we will see, significantly increases the cost of a disprove script. In other words, $\alpha$ is a considerable factor in practice: currently, our estimate suggests $\alpha \approx 1000$.
+Since we want to potentially disprove the equality $z_{j+1} = f_j(z_j)$, the
+cost of such disproof is the total size of $z_j$, $z_{j+1}$ and the shard $f_j$.
+Denote the size of the script/state by $|\star|$. Then, we want to minimize some
+sort of ``average'' of $\alpha(|z_j| + |z_{j+1}|) + |f_j|$. The factor $\alpha$
+is introduced since, besides the cost of storing $z_j$, we also need to
+\textit{commit} to these values which, as we will see, significantly increases
+the cost of a disprove script. In other words, $\alpha$ is a considerable factor
+in practice: currently, our estimate suggests $\alpha \approx 1000$.
 
-Then, depending on the goal, we might choose different criteria of ``averaging'':
+Then, depending on the goal, we might choose different criteria of
+``averaging'':
 \begin{itemize}
-  \item \textbf{Maximal size}. Suppose we want to minimize the cost of the worst-case scenario. Suppose after the launching the splitting mechanism on the shard size $L$ we get $k_L$ shards $f_{L,1},\dots,f_{L,k_L}$ with intermediate states $z_{L,0},\dots,z_{L,k_L}$. Then, we choose $L$ to be:
+  \item \textbf{Maximal size}. Suppose we want to minimize the cost of the
+  worst-case scenario. Suppose after the launching the splitting mechanism on
+  the shard size $L$ we get $k_L$ shards $f_{L,1},\dots,f_{L,k_L}$ with
+  intermediate states $z_{L,0},\dots,z_{L,k_L}$. Then, we choose $L$ to be:
   \begin{equation*}
     \hat{L} := \argmin_{0 \leq L \leq L_{\max}} \left\{ \max_{ 0 \leq j < k_L } \left\{ \alpha(|z_{L,j}| + |z_{L,j+1}|) + |f_{L,j}| \right\} \right\}\;.
   \end{equation*}
-  \item \textbf{Average size}. Suppose we want to minimize the average cost of disproof. Then, we choose $L$ to be:
+  \item \textbf{Average size}. Suppose we want to minimize the average cost of
+  disproof. Then, we choose $L$ to be:
   \begin{equation*}
     \hat{L} := \argmin_{0 \leq L \leq L_{\max}} \left\{ \frac{1}{k_L} \sum_{0 \leq j < k_L} \left( \alpha(|z_{L,j}| + |z_{L,j+1}|) + |f_{L,j}| \right) \right\}\;.
   \end{equation*}
 \end{itemize}
 
-Note, however, that this algorithm is still far from being the most optimal one. We assume that, in reality, in the majority of cases, the optimal shards sizes can significantly differ, which the automatic splitting can easily miss.
+Note, however, that this algorithm is still far from being the most optimal one.
+We assume that, in reality, in the majority of cases, the optimal shards sizes
+can significantly differ, which the automatic splitting can easily miss.
 
-The ultimate solution would be to check every possible splitting and choose the one that minimizes the cost of disproof. However, this is not feasible in practice, as the number of possible splittings is enormous (even, say, for the fixed number of shards).
+The ultimate solution would be to check every possible splitting and choose the
+one that minimizes the cost of disproof. However, this is not feasible in
+practice, as the number of possible splittings is enormous (even, say, for the
+fixed number of shards).
 
 \subsubsection{Current State}
-We implemented the basic splitting mechanism that finds $f_1,\dots,f_k$ of almost equal size (which can be specified). It already produces valid shards and intermediate states on all of the following scripts:
+We implemented the basic splitting mechanism that finds $f_1,\dots,f_k$ of
+almost equal size (which can be specified). It already produces valid shards and
+intermediate states on all of the following scripts:
 \begin{itemize}
     \item \textbf{Big Integer Addition} (of any bitsize).
     \item \textbf{Big Integer Multiplication} (of any bitsize).
@@ -253,24 +367,27 @@ We implemented the basic splitting mechanism that finds $f_1,\dots,f_k$ of almos
     \item \textbf{\texttt{u32} Multiplication}.
 \end{itemize}
 
-We will explore the last two functions in more detail a bit later. All the current implementation of test scripts can be found through the link below:
+We will explore the last two functions in more detail a bit later. All the
+current implementation of test scripts can be found through the link below:
 \begin{center}
   \url{https://github.com/distributed-lab/bitvm2-splitter/tree/main/bitcoin-testscripts}
 \end{center}
 
 
-\section{Assert Transaction}\label{sec:assert-tx}
-When the splitting is ready, the prover $\mathcal{P}$ publishes an \texttt{Assert} transaction,
-which has one output with multiple possible spending scenarios:
+\section{Assert Transaction}\label{sec:assert-tx} When the splitting is ready,
+the prover $\mathcal{P}$ publishes an \texttt{Assert} transaction, which has one
+output with multiple possible spending scenarios:
 
 \begin{enumerate}
   \item \texttt{PayoutScript} (\texttt{CheckSig} + \texttt{CheckLocktimeVerify} + \texttt{Covenant}) --- the transaction has passed verification, and the operator can spend the output, thereby confirming the statement $y=f(x)$.
   \item $\texttt{DisproveScript[\text{$i$}]}$ --- one of the challengers has found a discrepancy in the intermediate states \(z_i\), \(z_{i-1}\) and the sub-program \(f_i\). In other words, they have proven that \(f_i(z_{i-1}) \neq z_i\), and thus, they can spend the output.
 \end{enumerate}
 
-While the \texttt{PayoutScript} is rather trivial, we need to specify how the \texttt{DisproveScript[\text{$i$}]} is constructed. \texttt{DispoveScript} is part of the MAST tree in a Taproot address, allowing the verifier to claim the transaction amount for states
-\(z_i\), \(z_{i-1}\), and sub-program \(f_i\). We call it
-\(\texttt{DisproveScript[\text{$i$}]}\) and compose it as follows:
+While the \texttt{PayoutScript} is rather trivial, we need to specify how the
+\texttt{DisproveScript[\text{$i$}]} is constructed. \texttt{DispoveScript} is
+part of the MAST tree in a Taproot address, allowing the verifier to claim the
+transaction amount for states \(z_i\), \(z_{i-1}\), and sub-program \(f_i\). We
+call it \(\texttt{DisproveScript[\text{$i$}]}\) and compose it as follows:
 
 \begin{empheqboxed}
 \begin{align*}
@@ -278,67 +395,67 @@ While the \texttt{PayoutScript} is rather trivial, we need to specify how the \t
 \end{align*}
 \end{empheqboxed}
 
-This script does not need a \texttt{CheckSig}, as with the correct \(z_i\) and \(z_{i-1}\), it will consistently execute successfully. Therefore, we added a Winternitz signature and covenant verification to restrict the script's spending capability. Currently, we will simulate covenant through a committee of a single person (essentially, being a single signature verification), but this is easily extendable to the multi-threshold signature version (and, potentially, to \texttt{OP\_CAT}-based version, but that is the next phase of our research).
+This script does not need a \texttt{CheckSig}, as with the correct \(z_i\) and
+\(z_{i-1}\), it will consistently execute successfully. Therefore, we added a
+Winternitz signature and covenant verification to restrict the script's spending
+capability. Currently, we will simulate covenant through a committee of a single
+person (essentially, being a single signature verification), but this is easily
+extendable to the multi-threshold signature version (and, potentially, to
+\texttt{OP\_CAT}-based version, but that is the next phase of our research).
 
 \subsection{Winternitz Signature}\label{sec:lamport-signature}
 
-Unlike other digital signature algorithms, the Winternitz signature
-uses a pair of random secret and public keys
-$(\mathsf{sk}, \mathsf{pk})$ that can sign and verify only any message
-from the message space \(\mathcal{M} = {\{0, 1\}}^{\ell}\) of
-$\ell$-bit messages.
+Unlike other digital signature algorithms, the Winternitz signature uses a pair
+of random secret and public keys $(\mathsf{sk}, \mathsf{pk})$ that can sign and
+verify only any message from the message space \(\mathcal{M} = {\{0,
+1\}}^{\ell}\) of $\ell$-bit messages.
 
-However, once the signature $\sigma_{m}$ is formed, where
-$m \in \mathcal{M}$ is the message being signed,
-\((\mathsf{sk}_{m}, \mathsf{pk}_{m})\) become tied to \(m\), because
-any other signature with these keys will compromise the keys
-themselves. Thus, for the message \(m\), the keys
-\((\mathsf{sk}_{m}, \mathsf{pk}_{m})\) are one-time use.
+However, once the signature $\sigma_{m}$ is formed, where $m \in \mathcal{M}$ is
+the message being signed, \((\mathsf{sk}_{m}, \mathsf{pk}_{m})\) become tied to
+\(m\), because any other signature with these keys will compromise the keys
+themselves. Thus, for the message \(m\), the keys \((\mathsf{sk}_{m},
+\mathsf{pk}_{m})\) are one-time use.
 
-Now, let us define the Winternitz Signature. Further by $f^{(k)}(x)$
-denote the composition of function $f$ with itself $k$ times:
-$f^{(k)}(x) = \underbrace{f \circ \dots \circ f}_{k \; \text{times}}(x)$.
+Now, let us define the Winternitz Signature. Further by $f^{(k)}(x)$ denote the
+composition of function $f$ with itself $k$ times: $f^{(k)}(x) = \underbrace{f
+\circ \dots \circ f}_{k \; \text{times}}(x)$.
 
 \begin{definition}
-  The \textbf{Winternitz Signature Scheme} over parameters $(k,d)$
-  with a hash function $H: \mathcal{X} \to \mathcal{X}$ is defined as follows:
+  The \textbf{Winternitz Signature Scheme} over parameters $(k,d)$ with a hash
+  function $H: \mathcal{X} \to \mathcal{X}$ is defined as follows:
   \begin{itemize}
     \item $\mathsf{Gen}(1^{\lambda})$: secret key is generated as a tuple
       $(x_1,\dots,x_k) \xleftarrow{R} \mathcal{X}$, while the public key is
-      $(y_1,\dots,y_k)$, where $y_j = H^{(d)}(x_j)$ for each
-      $j \in \{1,\dots,k\}$.
-    \item $\mathsf{Sign}(m,\mathsf{sk})$: denote by
-      $\mathcal{I}_{d,k} := {(\{0,\dots,d\})}^k$ and suppose we have an encoding
-      function $\mathsf{Enc}: \mathcal{M} \to \mathcal{I}_{d,k}$ that
-      translates a message
-      $m \in \mathcal{M} = {\{0,1\}}^{\ell}$ to the element in space
-      $\mathcal{I}_{d,k}$. Now, set
-      $e = (e_1,\dots,e_k) \gets \mathsf{Enc}(m)$. Then, the signature is
-      formed as:
+      $(y_1,\dots,y_k)$, where $y_j = H^{(d)}(x_j)$ for each $j \in
+      \{1,\dots,k\}$.
+    \item $\mathsf{Sign}(m,\mathsf{sk})$: denote by $\mathcal{I}_{d,k} :=
+      {(\{0,\dots,d\})}^k$ and suppose we have an encoding function
+      $\mathsf{Enc}: \mathcal{M} \to \mathcal{I}_{d,k}$ that translates a
+      message $m \in \mathcal{M} = {\{0,1\}}^{\ell}$ to the element in space
+      $\mathcal{I}_{d,k}$. Now, set $e = (e_1,\dots,e_k) \gets \mathsf{Enc}(m)$.
+      Then, the signature is formed as:
       \begin{equation*}
         \sigma \gets ({H}^{(e_1)}(x_1), H^{(e_2)}(x_2), \dots, H^{(e_k)}(x_k))
       \end{equation*}
-    \item $\mathsf{Verify}(\sigma,m,\mathsf{pk})$: to verify
-      $\sigma = (\sigma_1,\dots,\sigma_k)$ on $m \in \mathcal{M}$ and
-      $\mathsf{pk}=(y_1,\dots,y_k)$, first compute encoding
-      $(e_1,\dots,e_k) \gets \mathsf{Enc}(m)$ and then check whether:
+    \item $\mathsf{Verify}(\sigma,m,\mathsf{pk})$: to verify $\sigma =
+      (\sigma_1,\dots,\sigma_k)$ on $m \in \mathcal{M}$ and
+      $\mathsf{pk}=(y_1,\dots,y_k)$, first compute encoding $(e_1,\dots,e_k)
+      \gets \mathsf{Enc}(m)$ and then check whether:
       \begin{equation*}
         H^{(d-e_j)}(\sigma_j) = y_j, \quad j \in \{1,\dots,k\}.
       \end{equation*}
   \end{itemize}
 \end{definition}
 
-That being said, by taking the intermediate states
-${\{z_j\}}_{1 \leq j \leq n}$ as the message for the Winternitz signature, we
-form one-time key pairs
+That being said, by taking the intermediate states ${\{z_j\}}_{1 \leq j \leq n}$
+as the message for the Winternitz signature, we form one-time key pairs
 ${\{(\mathsf{sk}_j,\mathsf{pk}_j)\}}_{1 \leq j \leq n}$ and signatures
-${\{\sigma_j\}}_{1 \leq j \leq n}$, respectively (where each of
-  $\mathsf{pk}_j$, $\mathsf{sk}_j$, and $\sigma_j$ corresponds to the
-intermediate variable $z_j$). Then, to spend the output from the
-\texttt{Assert} transaction using the $\texttt{DisproveScript[\text{$j$}]}$
-script, the challenger is required to add the corresponding states
-$z_j$, $z_{j-1}$, and corresponding signatures $\sigma_j$,
-$\sigma_{j-1}$ to the stack in the \texttt{scriptSig}, making the
+${\{\sigma_j\}}_{1 \leq j \leq n}$, respectively (where each of $\mathsf{pk}_j$,
+$\mathsf{sk}_j$, and $\sigma_j$ corresponds to the intermediate variable $z_j$).
+Then, to spend the output from the \texttt{Assert} transaction using the
+$\texttt{DisproveScript[\text{$j$}]}$ script, the challenger is required to add
+the corresponding states $z_j$, $z_{j-1}$, and corresponding signatures
+$\sigma_j$, $\sigma_{j-1}$ to the stack in the \texttt{scriptSig}, making the
 \texttt{scriptSig} of the transaction input like this:
 
 \begin{empheqboxed}
@@ -351,38 +468,43 @@ $\sigma_{j-1}$ to the stack in the \texttt{scriptSig}, making the
   \end{align*}
 \end{empheqboxed}
 
-where \texttt{OP\_WINTERNITZVERIFY} is the verification of the
-Winternitz signature (commitment), described in Bitcoin Script (as
-  Bitcoin Script does not have a built-in \texttt{OP\_CODE} for
-Winternitz signatures)\footnote{Its implementation can be found here:
+where \texttt{OP\_WINTERNITZVERIFY} is the verification of the Winternitz
+signature (commitment), described in Bitcoin Script (as Bitcoin Script does not
+have a built-in \texttt{OP\_CODE} for Winternitz signatures)\footnote{Its
+implementation can be found here:
 \url{https://github.com/distributed-lab/bitvm2-splitter/blob/feature/winternitz/bitcoin-winternitz/src/lib.rs}.}.
 
 \subsubsection{Winternitz Signatures in Bitcoin
   Script}\label{sec:winternitz-in-bitcoin-script}
 
-The first biggest issue with the provided approach is that the Winternitz
-Script requires encoding the message $\mathsf{Enc}(m)$, which splits 
-the state into $d$ digit number. For BitVM2, it means encoding
-each state $z_j$. However, the arithmetic in Bitcoin Script is limited and contains only basic
-opcodes such as \texttt{OP\_ADD}. To make matters worse, all the
-corresponding operations can be applied to 32-bit elements only, and
-as the last one is reserved for a sign, only 31 bits can be used to
-store the state. This limitation can be considered strong, but most of
-the math can be implemented through 32-bit stack elements. So lets fix
-$\ell = 32$ --- maximum size of the stack element in bits.
+The first biggest issue with the provided approach is that the Winternitz Script
+requires encoding the message $\mathsf{Enc}(m)$, which splits the state into $d$
+digit number. For BitVM2, it means encoding each state $z_j$. However, the
+arithmetic in Bitcoin Script is limited and contains only basic opcodes such as
+\texttt{OP\_ADD}. To make matters worse, all the corresponding operations can be
+applied to 32-bit elements only, and as the last one is reserved for a sign,
+only 31 bits can be used to store the state. This limitation can be considered
+strong, but most of the math can be implemented through 32-bit stack elements.
+So lets fix $\ell = 32$ --- maximum size of the stack element in bits.
 
 The first observation is that essentially $z_j$ is a collection of 32-bit numbers (suppose this collection consists of $n_j$ numbers). Denote this fact by $z_j = (u_{j,1}, u_{j,2}, \dots, u_{j, n_j})$ where each $u_{j,k} \in \mathbb{Z}_{2^{\ell}}$. Therefore, one way to implement the message encoding is following:
 \begin{enumerate}
-  \item Aggregate elements of $z_j$ into a single hash digest $h_j \gets H(u_{j,1} \parallel u_{j,2} \parallel \dots \parallel u_{j,n_j})$.
+  \item Aggregate elements of $z_j$ into a single hash digest $h_j \gets
+  H(u_{j,1} \parallel u_{j,2} \parallel \dots \parallel u_{j,n_j})$.
   \item Use dominant free function $P(h_j)$ as described in~\cite{applied-crypto} to get the decomposition.
 \end{enumerate}
 
-However, as of now, the Bitcoin does not have the \texttt{OP\_CAT}, so there is no way we can effectively aggregate the intermediate state $z_j$ into a single stack element. Meaning, we need to create a Winternitz keypair $(\mathsf{pk}_{j,k}, \mathsf{sk}_{j,k})$ for each $u_{j,k}$ where $k \in \{1,\dots,n_j\}$. 
+However, as of now, the Bitcoin does not have the \texttt{OP\_CAT}, so there is
+no way we can effectively aggregate the intermediate state $z_j$ into a single
+stack element. Meaning, we need to create a Winternitz keypair
+$(\mathsf{pk}_{j,k}, \mathsf{sk}_{j,k})$ for each $u_{j,k}$ where $k \in
+\{1,\dots,n_j\}$. 
 
-However, there are couple of tricks to make the life easier. First, obviously, it is convenient to 
-choose $d$ such that $d+1=2^w$ for some $w \in \mathbb{N}$. This splits the signed message $m$ 
-by the fixed number of equal chunks of $w$ bits. Let $N$ be the sum of $n_0$ --- the number of
-$d$-digit numbers in the decomposition of $m$, and $n_1$ a checksum (see \Cref{tab:winternitz}).
+However, there are couple of tricks to make the life easier. First, obviously,
+it is convenient to choose $d$ such that $d+1=2^w$ for some $w \in \mathbb{N}$.
+This splits the signed message $m$ by the fixed number of equal chunks of $w$
+bits. Let $N$ be the sum of $n_0$ --- the number of $d$-digit numbers in the
+decomposition of $m$, and $n_1$ a checksum (see \Cref{tab:winternitz}).
 
 \iffalse{}
 %The python script i used for this table:
@@ -419,11 +541,14 @@ for d in ds:
   message}\label{tab:winternitz}
 \end{table}
 
-Secondly, notice the following fact: \emph{encoding the message $m$ (essentially, being the number decomposition) is more expensive than decoding the message (being the number recovery from limbs)}.
-In fact, if chunks are of equal lengths, the recovery of a message $m$ from $n_0$ digits can be computed very easily: simply set $m \gets \sum_{i=0}^{n_0} e_i \times 2^{wi}$. Note that multiplication by powers 
-of two can be implemented in Bitcoin Script with sequence of \texttt{OP\_DUP} and \texttt{OP\_ADD}
-opcodes quite efficiently. So, for example, multiplication of $e_j$ by $2^n$ in Bitcoin
-Script is:
+Secondly, notice the following fact: \emph{encoding the message $m$
+(essentially, being the number decomposition) is more expensive than decoding
+the message (being the number recovery from limbs)}. In fact, if chunks are of
+equal lengths, the recovery of a message $m$ from $n_0$ digits can be computed
+very easily: simply set $m \gets \sum_{i=0}^{n_0} e_i \times 2^{wi}$. Note that
+multiplication by powers of two can be implemented in Bitcoin Script with
+sequence of \texttt{OP\_DUP} and \texttt{OP\_ADD} opcodes quite efficiently. So,
+for example, multiplication of $e_j$ by $2^n$ in Bitcoin Script is:
 
 \begin{empheqboxed}
   \begin{align*}
@@ -431,12 +556,11 @@ Script is:
   \end{align*}
 \end{empheqboxed}
 
-As Bitcoin Script has no loops or jumps, implementing dynamic number
-of operations, like hashing something $d - e_j$ times without knowing
-the $e_j$ beforehand is challenging. That's why implementation uses
-the ``lookup'' table of all $d$ hashes of signature's part $\sigma_j$ and
-by using \texttt{OP\_PICK} pop the $d - e_j$ one on the top of stack,
-like this:
+As Bitcoin Script has no loops or jumps, implementing dynamic number of
+operations, like hashing something $d - e_j$ times without knowing the $e_j$
+beforehand is challenging. That's why implementation uses the ``lookup'' table
+of all $d$ hashes of signature's part $\sigma_j$ and by using \texttt{OP\_PICK}
+pop the $d - e_j$ one on the top of stack, like this:
 
 \begin{empheqboxed}
   \begin{align*}
@@ -448,11 +572,22 @@ like this:
 
 So overall, the algorithm to sign the states looks as follows:
 \begin{enumerate}
-  \item The prover $\mathcal{P}$ runs the program on all shards $\{f_j\}_{1 \leq j \leq n}$ to obtain the intermediate states $\{z_j\}_{0 \leq j \leq n}$: essentially, being the stack after executing \script{\elem{z_{j-1}} \elem{f_j}}.
-  \item $\mathcal{P}$ interprets each $z_j$ as a collection of $n_j$ 32-bit numbers: $z_j = (u_{j,1}, u_{j,2}, \dots, u_{j, n_j})$.
-  \item $\mathcal{P}$ encodes each $u_{j,k}$ and forms the Winternitz keypairs $\{(\mathsf{pk}_{j,k},\mathsf{sk}_{j,k})\}_{1 \leq k \leq n_j}$.
-  \item Verifier $\mathcal{V}$, when publishing the \texttt{DisproveScript[\text{$j$}]}, will add the corresponding \textbf{encoded} states $\mathsf{Enc}(z_j)$, $\mathsf{Enc}(z_{j-1})$, and corresponding signatures $\sigma_j$ and $\sigma_{j-1}$. 
-  \item The script, in turn, besides the verification of the intermediate states signatures, will \textbf{recover} the original $u_{j,k}$ elements from the encoded states and verify the equality $f_j(z_{j-1}) = z_j$ after recovery of both $z_j$ and $z_{j-1}$.
+  \item The prover $\mathcal{P}$ runs the program on all shards $\{f_j\}_{1 \leq
+  j \leq n}$ to obtain the intermediate states $\{z_j\}_{0 \leq j \leq n}$:
+  essentially, being the stack after executing \script{\elem{z_{j-1}}
+  \elem{f_j}}.
+  \item $\mathcal{P}$ interprets each $z_j$ as a collection of $n_j$ 32-bit
+  numbers: $z_j = (u_{j,1}, u_{j,2}, \dots, u_{j, n_j})$.
+  \item $\mathcal{P}$ encodes each $u_{j,k}$ and forms the Winternitz keypairs
+  $\{(\mathsf{pk}_{j,k},\mathsf{sk}_{j,k})\}_{1 \leq k \leq n_j}$.
+  \item Verifier $\mathcal{V}$, when publishing the
+  \texttt{DisproveScript[\text{$j$}]}, will add the corresponding
+  \textbf{encoded} states $\mathsf{Enc}(z_j)$, $\mathsf{Enc}(z_{j-1})$, and
+  corresponding signatures $\sigma_j$ and $\sigma_{j-1}$. 
+  \item The script, in turn, besides the verification of the intermediate states
+  signatures, will \textbf{recover} the original $u_{j,k}$ elements from the
+  encoded states and verify the equality $f_j(z_{j-1}) = z_j$ after recovery of
+  both $z_j$ and $z_{j-1}$.
 \end{enumerate}
 
 \textbf{Script Size Analysis.} Still, even with optimizations
@@ -609,19 +744,25 @@ All in all, the $\texttt{DisproveScript[\text{$j$}]}$ is formed as follows:
   \end{empheqboxed}
 \end{itemize}
 
-\textbf{Note on implementation.} One more tricky part is that $z_j$, in fact, is not really a collection of stack elements, but two collections: one sitting in the \texttt{mainstack}, while the other is in the \texttt{altstack}. For that reason, when signing $z_j$, what we \textit{really} mean is signing both elements in the \texttt{mainstack} and the \texttt{altstack}. Finally, one should carefully manage when to pop the elements in and out of the \texttt{altstack}. All of this is implemented in the current version of the code.
+\textbf{Note on implementation.} One more tricky part is that $z_j$, in fact, is
+not really a collection of stack elements, but two collections: one sitting in
+the \texttt{mainstack}, while the other is in the \texttt{altstack}. For that
+reason, when signing $z_j$, what we \textit{really} mean is signing both
+elements in the \texttt{mainstack} and the \texttt{altstack}. Finally, one
+should carefully manage when to pop the elements in and out of the
+\texttt{altstack}. All of this is implemented in the current version of the
+code.
 
 \subsection{Structure of the MAST Tree in a Taproot
 Address}\label{sec:mast-tree-structure}
 
-The inputs of the \texttt{Assert} transaction spend the output to a
-Taproot address, which consists of a MAST tree of Bitcoin scripts
-mentioned in \Cref{sec:assert-tx}. From the BitVM2 document, it
-is known that the first \(n\) scripts in the tree are all
-\(\texttt{DisproveScript[\text{$i$}]}\), where \(i \in \{1,\dots, n\}\), and the last is a
-script that allows the operator who published the \texttt{Assert}
-transaction to spend the output after some time. A visualization of
-this tree can be seen in the \Cref{fig:assert-tx-mast-tree}.
+The inputs of the \texttt{Assert} transaction spend the output to a Taproot
+address, which consists of a MAST tree of Bitcoin scripts mentioned in
+\Cref{sec:assert-tx}. From the BitVM2 document, it is known that the first \(n\)
+scripts in the tree are all \(\texttt{DisproveScript[\text{$i$}]}\), where \(i
+\in \{1,\dots, n\}\), and the last is a script that allows the operator who
+published the \texttt{Assert} transaction to spend the output after some time. A
+visualization of this tree can be seen in the \Cref{fig:assert-tx-mast-tree}.
 
 % Drawing the Figure
 \tikzset{
@@ -673,8 +814,8 @@ this tree can be seen in the \Cref{fig:assert-tx-mast-tree}.
 
 \section{Exploring BitVM2 Potential using Toy Examples}\label{sec:covenants-emulation}
 
-Finally, in this section, we explore the potential of BitVM2 using
-some toy examples. We will consider the following functions:
+Finally, in this section, we explore the potential of BitVM2 using some toy
+examples. We will consider the following functions:
 \begin{itemize}
   \item \textbf{\texttt{u32} Multiplication} --- a function that
     multiplies two 32-bit unsigned integers.
@@ -683,18 +824,32 @@ some toy examples. We will consider the following functions:
 \end{itemize}
 
 We will demonstrate that the current implementation of BitVM2 and current
-approach to writing Mathematics (finite field arithmetic, elliptic curve operations etc.) 
-cannot handle even the first example. Based on the second example, we will show 
-that with the appropriate ideology, the BitVM2 can still be used to verify the execution of
-complex programs, but written in a different way. We call such functions as
-\textbf{BitVM-friendly functions}.
+approach to writing Mathematics (finite field arithmetic, elliptic curve
+operations etc.) cannot handle even the first example. Based on the second
+example, we will show that with the appropriate ideology, the BitVM2 can still
+be used to verify the execution of complex programs, but written in a different
+way. We call such functions as \textbf{BitVM-friendly functions}.
 \subsection{u32 Multiplication}
 
-The most basic example is the multiplication of two 32-bit unsigned integers. In our terminology, $f(x,y) = x \times y$, where the output is a 64-bit unsigned integer. Since using \texttt{u32} elements in the stack to represent limbs of the big integer typically results in overflowing, we use two $30$-bit limbs to represent a \texttt{u32}. This way, the result, being \texttt{u64}, is represented by three \texttt{u30} limbs. We acknowledge that this is might not be the most efficient representation, but it should suffice for the demonstration purposes.
+The most basic example is the multiplication of two 32-bit unsigned integers. In
+our terminology, $f(x,y) = x \times y$, where the output is a 64-bit unsigned
+integer. Since using \texttt{u32} elements in the stack to represent limbs of
+the big integer typically results in overflowing, we use two $30$-bit limbs to
+represent a \texttt{u32}. This way, the result, being \texttt{u64}, is
+represented by three \texttt{u30} limbs. We acknowledge that this is might not
+be the most efficient representation, but it should suffice for the
+demonstration purposes.
 
 \subsubsection{Implementation Notes}
 
-In this section, we give a brief recap of the BitVM implementation of the big integer multiplication in Bitcoin Script. Essentially, the Bitcoin script utilizes the double-and-add method, commonly used for elliptic curve arithmetic. The idea is following: we can first decompose one of the integers to the binary form (say, $y=(y_0,\dots,y_{N-1})_2$ where $N$ is the bitsize of $y$). Next, we iterate through each bit and on each step, we double the temporary variable and add it to the result if the corresponding bit in $y$ is $1$. The concrete algorithm is described in \Cref{alg:double_and_add}.
+In this section, we give a brief recap of the BitVM implementation of the big
+integer multiplication in Bitcoin Script. Essentially, the Bitcoin script
+utilizes the double-and-add method, commonly used for elliptic curve arithmetic.
+The idea is following: we can first decompose one of the integers to the binary
+form (say, $y=(y_0,\dots,y_{N-1})_2$ where $N$ is the bitsize of $y$). Next, we
+iterate through each bit and on each step, we double the temporary variable and
+add it to the result if the corresponding bit in $y$ is $1$. The concrete
+algorithm is described in \Cref{alg:double_and_add}.
 
 \begin{algorithm}
   \caption{Double-and-add method for integer multiplication}\label{alg:double_and_add}
@@ -719,11 +874,20 @@ In this section, we give a brief recap of the BitVM implementation of the big in
   
 \end{algorithm}
 
-Note that implementing long addition and doubling in Bitcoin Script is quite cheap, so algorithm turns out to be relatively efficient --- you can read more in our recently published paper \cite{w-width-mul}, where we analyze various strategies of big integer multiplication. In our particular case, we assume that \texttt{u32} is just a special case of the big integer with the total bitsize of $N=32$. 
+Note that implementing long addition and doubling in Bitcoin Script is quite
+cheap, so algorithm turns out to be relatively efficient --- you can read more
+in our recently published paper \cite{w-width-mul}, where we analyze various
+strategies of big integer multiplication. In our particular case, we assume that
+\texttt{u32} is just a special case of the big integer with the total bitsize of
+$N=32$. 
 
 \subsubsection{Split Cost Analysis}
 
-The total size of the script turns out to be roughly \textbf{4450 bytes} (4450B). Now suppose we want to split it into chunks of size $600$. The result is depicted in \Cref{tab:u32_split}. Note that due to the presence of \texttt{OP\_IF}'s, we cannot split the program into \textit{exactly} equal parts of size 600B, so the size insignificantly varies.
+The total size of the script turns out to be roughly \textbf{4450 bytes}
+(4450B). Now suppose we want to split it into chunks of size $600$. The result
+is depicted in \Cref{tab:u32_split}. Note that due to the presence of
+\texttt{OP\_IF}'s, we cannot split the program into \textit{exactly} equal parts
+of size 600B, so the size insignificantly varies.
 
 \begin{table}[H]
   \centering
@@ -744,33 +908,53 @@ The total size of the script turns out to be roughly \textbf{4450 bytes} (4450B)
   \label{tab:u32_split}
 \end{table}
 
-Notice an interesting fact: the cost of a single commitment exceeds the cost of the shard itself many times! For example, if we were to build the \texttt{DisproveScript} for transition from $z_1$ to $z_2$, we would need the script of size $37\text{kB}+32\text{kB}+623\text{B} \approx 69.6\text{kB}$! This leads us to the essential conclusion.
+Notice an interesting fact: the cost of a single commitment exceeds the cost of
+the shard itself many times! For example, if we were to build the
+\texttt{DisproveScript} for transition from $z_1$ to $z_2$, we would need the
+script of size $37\text{kB}+32\text{kB}+623\text{B} \approx 69.6\text{kB}$! This
+leads us to the essential conclusion.
 
 \textbf{Takeaway.} \textit{Optimizing the intermediate states representation is crucial for the BitVM2. Even if the program is split into small chunks, the cost of the commitment can still be overwhelming.}
 
-This leads us to the question: can we throw BitVM2 out of the window due to such inefficiency and wait for the \texttt{OP\_CAT}? The answer is obviously no (for what other reason are we writing this paper?). We can still use BitVM2, but we need to change the way we write the programs. We call such programs \textbf{BitVM-friendly functions}. We provide the first example below.
+This leads us to the question: can we throw BitVM2 out of the window due to such
+inefficiency and wait for the \texttt{OP\_CAT}? The answer is obviously no (for
+what other reason are we writing this paper?). We can still use BitVM2, but we
+need to change the way we write the programs. We call such programs
+\textbf{BitVM-friendly functions}. We provide the first example below.
 
 \subsection{Square Fibonacci Sequence}
-Let us consider a toy example of the Square Fibonacci Sequence. Suppose our input is a pair of elements $(x_0,x_1)$ from the field $\mathbb{F}_q$. For the sake of convenience, we choose $\mathbb{F}_q$ to be the prime field of BN254 curve, which is frequently used for zk-SNARKs. Then, our program $f_n$ consists in finding the $(n-1)^{\text{th}}$ element in the sequence:
+Let us consider a toy example of the Square Fibonacci Sequence. Suppose our
+input is a pair of elements $(x_0,x_1)$ from the field $\mathbb{F}_q$. For the
+sake of convenience, we choose $\mathbb{F}_q$ to be the prime field of BN254
+curve, which is frequently used for zk-SNARKs. Then, our program $f_n$ consists
+in finding the $(n-1)^{\text{th}}$ element in the sequence:
 \begin{equation*}
   x_{j+2} = x_{j+1}^2 + x_j^2, \; \text{over $\mathbb{F}_q$.}
 \end{equation*}
 
-Such function has a very natural decomposition. Suppose our state is described by the tuple $(x_j,x_{j+1})$. Consider the transition function $\phi: (x_j, x_{j+1}) \mapsto (x_{j+1}, x_j^2 + x_{j+1}^2)$. In this case, our function $f_n$ can be defined as:
+Such function has a very natural decomposition. Suppose our state is described
+by the tuple $(x_j,x_{j+1})$. Consider the transition function $\phi: (x_j,
+x_{j+1}) \mapsto (x_{j+1}, x_j^2 + x_{j+1}^2)$. In this case, our function $f_n$
+can be defined as:
 \begin{equation*}
   f_n = \phi^{(n)}(x_0,x_1)[1],
 \end{equation*}
 
 where the index $(a, b)[1] = b$ means the second element in the tuple.
 
-Suppose that we have $\mathtt{Fq}$ implemented in the Bitcoin script. Then, the state transition function can be implemented as:
+Suppose that we have $\mathtt{Fq}$ implemented in the Bitcoin script. Then, the
+state transition function can be implemented as:
 \begin{empheqboxed}
   \begin{align*}
     \opcode{\texttt{FQ::DUP}} \, \opcode{\texttt{Fq::SQUARE}} \elem{2} \opcode{\texttt{Fq::OP\_ROLL}} \, \opcode{\texttt{Fq::SQUARE}} \, \opcode{\texttt{Fq::ADD}}
   \end{align*}
 \end{empheqboxed}
 
-The size of this transition is roughly \textit{270 kB} and it requires the storage of 18 elements in the stack, costing additional \textit{18 kB}. So the rough size of \texttt{DisproveScript} is \textbf{290 kB}, which is a lot, but still manageable. In turn, consider the function $f_n$, written in Bitcoin script:
+The size of this transition is roughly \textit{270 kB} and it requires the
+storage of 18 elements in the stack, costing additional \textit{18 kB}. So the
+rough size of \texttt{DisproveScript} is \textbf{290 kB}, which is a lot, but
+still manageable. In turn, consider the function $f_n$, written in Bitcoin
+script:
 \begin{empheqboxed}
   \begin{align*}
     &\textbf{for} \; i \in \{1,\dots,n\} \; \textbf{do} \\
@@ -780,13 +964,22 @@ The size of this transition is roughly \textit{270 kB} and it requires the stora
   \end{align*}
 \end{empheqboxed}
 
-For $n=128$, the size is roughly \textbf{35 MB}, which, in contrast, is not at all manageable. However, the decomposition of the function would make roughly $n$ scripts, each of size \textbf{290 kB}. 
+For $n=128$, the size is roughly \textbf{35 MB}, which, in contrast, is not at
+all manageable. However, the decomposition of the function would make roughly
+$n$ scripts, each of size \textbf{290 kB}. 
 
-Additionally, notice that regardless of $n$, the size of the disprove scripts is always the same. Even if we take, say, $n=10000$, making the direct computation cost roughly $2\text{GB}$, we would have 10000 disprove transactions, each of size \textbf{290 kB}. Moreover, since the cost of storing the disprove scripts in the Taptree is negligible, \emph{it does not matter how many chunks we split the program into}.
+Additionally, notice that regardless of $n$, the size of the disprove scripts is
+always the same. Even if we take, say, $n=10000$, making the direct computation
+cost roughly $2\text{GB}$, we would have 10000 disprove transactions, each of
+size \textbf{290 kB}. Moreover, since the cost of storing the disprove scripts
+in the Taptree is negligible, \emph{it does not matter how many chunks we split
+the program into}.
 
 \section{Takeaways and Future Directions}
 
-All in all, we believe that, currently, in order to make BitVM2 practical, the whole Groth16 verifier should be written in the \textbf{BitVM-friendly} format. We give an informal definition below.
+All in all, we believe that, currently, in order to make BitVM2 practical, the
+whole Groth16 verifier should be written in the \textbf{BitVM-friendly} format.
+We give an informal definition below.
 
 \begin{definition}
   A function $f$ is called \textbf{BitVM-friendly} if:
@@ -795,12 +988,32 @@ All in all, we believe that, currently, in order to make BitVM2 practical, the w
     \item The intermediate states $\{z_j\}_{0 \leq j \leq n}$ contain a small number of elements, making the commitment cheap enough.
   \end{itemize}
 
-  This way, the worst-case disprove script would cost $\max_{1 \leq j \leq n}\left(|f_j| + \alpha(|z_j| + |z_{j-1}|)\right)$ for $\alpha \approx 1000$\footnote{This constant, after further optimizations, is subject to change.}. Note that the number of shards almost does not influence the cost since building the larger tree is typically not a problem.
+  This way, the worst-case disprove script would cost $\max_{1 \leq j \leq
+  n}\left(|f_j| + \alpha(|z_j| + |z_{j-1}|)\right)$ for $\alpha \approx
+  1000$\footnote{This constant, after further optimizations, is subject to
+  change.}. Note that the number of shards almost does not influence the cost
+  since building the larger tree is typically not a problem.
 \end{definition}
 
-It is a question, though, whether such BitVM-friendly function exists for all the Groth16 ingredients. However, we believe that many functions can be rewritten in such a way. Take, for example, the big integer multiplication. A great cost of such method is storing the bit decomposition of the number. So, if we have an $N$-bit integer, the cost of storing the decomposition is roughly $\alpha N$ (currently, this corresponds to $N \, \text{kB}$). Well, that is a lot, especially for 254-bit long integers, which are currently used in the Groth16 verifier. Moreover, there is no efficient way to split the program to avoid storing the decomposition: you initialize the table at the very beginning and drop at the very end.
+It is a question, though, whether such BitVM-friendly function exists for all
+the Groth16 ingredients. However, we believe that many functions can be
+rewritten in such a way. Take, for example, the big integer multiplication. A
+great cost of such method is storing the bit decomposition of the number. So, if
+we have an $N$-bit integer, the cost of storing the decomposition is roughly
+$\alpha N$ (currently, this corresponds to $N \, \text{kB}$). Well, that is a
+lot, especially for 254-bit long integers, which are currently used in the
+Groth16 verifier. Moreover, there is no efficient way to split the program to
+avoid storing the decomposition: you initialize the table at the very beginning
+and drop at the very end.
 
-So how to fix this? The answer is simple: manually construct the script so that at the end of each shard, the decomposition is dropped and $y$ is, therefore, recovered. Then, at the beginning of the next shard, compute the decomposition again and proceed. Of course, this would result in the significantly larger $f$, but the thing is that \textit{we do not care about the total size of $f$, as long as the commitment size with the shard size is small enough}. Informally, we present the \Cref{alg:double_and_add_bitvm_friendly} that implements the double-and-add method in a BitVM-friendly way.
+So how to fix this? The answer is simple: manually construct the script so that
+at the end of each shard, the decomposition is dropped and $y$ is, therefore,
+recovered. Then, at the beginning of the next shard, compute the decomposition
+again and proceed. Of course, this would result in the significantly larger $f$,
+but the thing is that \textit{we do not care about the total size of $f$, as
+long as the commitment size with the shard size is small enough}. Informally, we
+present the \Cref{alg:double_and_add_bitvm_friendly} that implements the
+double-and-add method in a BitVM-friendly way.
 
 \begin{algorithm}
   \caption{BitVM-friendly double-and-add method}\label{alg:double_and_add}
@@ -834,9 +1047,12 @@ So how to fix this? The answer is simple: manually construct the script so that 
 That being said, our future directions are the following:
 \begin{itemize}
   \item Try writing the aforementioned algorithm in the BitVM-friendly way.
-  \item Experiment whether $w$-width decomposition might make multiplication more friendly.
-  \item Implement the cost-effective version of the architecture (Section 5.3 in \cite{bitvm2}).
-  \item Run the architecture with the simple demo function verification on the Bitcoin mainnet.
+  \item Experiment whether $w$-width decomposition might make multiplication
+  more friendly.
+  \item Implement the cost-effective version of the architecture (Section 5.3 in
+  \cite{bitvm2}).
+  \item Run the architecture with the simple demo function verification on the
+  Bitcoin mainnet.
 \end{itemize}
 
 \printbibliography{}

@@ -9,7 +9,8 @@ bitcoin            = { workspace = true, features = ["rand-std"]}
 bitcoin-script     = { git = "https://github.com/BitVM/rust-bitcoin-script" }
 
 # BitVM scripts
-bitcoin-window-mul = { git = "https://github.com/distributed-lab/bitcoin-window-mul.git" }
+#bitcoin-window-mul = { git = "https://github.com/distributed-lab/bitcoin-window-mul.git" }
+bitcoin-window-mul = { path = "../../../alpen/bitcoin-window-mul" }
 bitcoin-splitter   = { path = "../bitcoin-splitter" }
 bitcoin-utils      = { path = "../bitcoin-utils" }
 
