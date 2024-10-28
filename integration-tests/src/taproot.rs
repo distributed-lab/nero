@@ -3,7 +3,7 @@ use std::{env, fs, str::FromStr as _};
 use bitcoin::{
     consensus::{Decodable, Encodable as _},
     io::Cursor,
-    key::Secp256k1,
+    key::{rand::rngs::SmallRng, Secp256k1},
     relative::Height,
     secp256k1::{All, PublicKey, SecretKey},
     Address, Amount, CompressedPublicKey, Network, OutPoint, Transaction, TxOut, Txid,
@@ -196,14 +196,16 @@ where
     } = setup_test::<I, O, S>(100_000)?;
 
     let operator_xonly = OPERATOR_PUBKEY.x_only_public_key().0;
-    let (assert_tx, distored_idx) = AssertTransaction::<{ I }, { O }, S>::with_options_distorted(
-        input_script,
-        operator_xonly,
-        Amount::from_sat(90_000),
-        Options {
-            payout_locktime: Height::from(1),
-        },
-    );
+    let (assert_tx, distored_idx) =
+        AssertTransaction::<{ I }, { O }, S>::with_options_distorted::<[u8; 32], SmallRng>(
+            input_script,
+            operator_xonly,
+            Amount::from_sat(90_000),
+            Options {
+                payout_locktime: Height::from(1),
+            },
+            [1; 32],
+        );
 
     let atx = assert_tx.clone().spend_p2wpkh_input_tx(
         &ctx,
