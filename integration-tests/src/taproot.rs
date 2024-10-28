@@ -3,7 +3,7 @@ use std::{env, fs, str::FromStr as _};
 use bitcoin::{
     consensus::{Decodable, Encodable as _},
     io::Cursor,
-    key::Secp256k1,
+    key::{rand::rngs::SmallRng, Secp256k1},
     relative::Height,
     secp256k1::{All, PublicKey, SecretKey},
     Address, Amount, CompressedPublicKey, Network, OutPoint, Transaction, TxOut, Txid,
@@ -129,6 +129,10 @@ fn test_script_payout_spending<const I: usize, const O: usize, S>() -> eyre::Res
 where
     S: SplitableScript<I, O>,
 {
+    // Approximate amount of satoshis to fullfill the fees for all
+    // transactions in tests.
+    const APPROX_TXOUT_AMOUNT: u64 = 71_000;
+
     let TestSetup {
         ctx,
         client,
@@ -138,13 +142,13 @@ where
         funding_txout,
         funder_address,
         ..
-    } = setup_test::<I, O, S>(71_000)?;
+    } = setup_test::<I, O, S>(APPROX_TXOUT_AMOUNT)?;
 
     let operator_xonly = OPERATOR_PUBKEY.x_only_public_key().0;
     let assert_tx = AssertTransaction::<{ I }, { O }, S>::with_options(
         input_script,
         operator_xonly,
-        Amount::from_sat(70_000),
+        Amount::from_sat(APPROX_TXOUT_AMOUNT - 1_000),
         Options {
             payout_locktime: Height::from(1),
         },
@@ -165,7 +169,7 @@ where
     let payout_tx = assert_tx.payout_transaction(
         &ctx,
         TxOut {
-            value: Amount::from_sat(69_000),
+            value: Amount::from_sat(APPROX_TXOUT_AMOUNT - 2_000),
             script_pubkey: funding_txout.script_pubkey,
         },
         OutPoint::new(atx.compute_txid(), 0),
@@ -184,6 +188,10 @@ fn test_script_disprove_distorted<const I: usize, const O: usize, S>() -> eyre::
 where
     S: SplitableScript<I, O>,
 {
+    // Approximate amount of satoshis to fullfill the fees for all
+    // transactions in tests.
+    const APPROX_TXOUT_AMOUNT: u64 = 100_000;
+
     let TestSetup {
         ctx,
         client,
@@ -193,17 +201,20 @@ where
         funding_txout,
         funder_address,
         ..
-    } = setup_test::<I, O, S>(100_000)?;
+    } = setup_test::<I, O, S>(APPROX_TXOUT_AMOUNT)?;
 
     let operator_xonly = OPERATOR_PUBKEY.x_only_public_key().0;
-    let (assert_tx, distored_idx) = AssertTransaction::<{ I }, { O }, S>::with_options_distorted(
-        input_script,
-        operator_xonly,
-        Amount::from_sat(90_000),
-        Options {
-            payout_locktime: Height::from(1),
-        },
-    );
+    let (assert_tx, distored_idx) =
+        AssertTransaction::<{ I }, { O }, S>::with_options_distorted::<[u8; 32], SmallRng>(
+            input_script,
+            operator_xonly,
+            // remove 10% from amount to fulfill the fee
+            Amount::from_sat(APPROX_TXOUT_AMOUNT * 9 / 10),
+            Options {
+                payout_locktime: Height::from(1),
+            },
+            [1; 32],
+        );
 
     let atx = assert_tx.clone().spend_p2wpkh_input_tx(
         &ctx,
@@ -220,7 +231,10 @@ where
     let disprove_txs = assert_tx.clone().disprove_transactions(
         &ctx,
         TxOut {
-            value: Amount::from_sat(9_000),
+            // take only 10% percent and leave other for the fee.
+            // This values is euristic and should calculated by
+            // ourself instead in future.
+            value: Amount::from_sat(APPROX_TXOUT_AMOUNT / 10),
             script_pubkey: funding_txout.script_pubkey,
         },
         OutPoint::new(atx.compute_txid(), 0),
@@ -245,7 +259,7 @@ where
 }
 
 #[test]
-#[ignore = "Stack size limit exceeded"]
+#[ignore = "tx-size"]
 fn test_u254_mul_disprove() -> eyre::Result<()> {
     color_eyre::install()?;
     tracing_subscriber::fmt().init();
@@ -269,12 +283,14 @@ fn test_u254_mul_payout() -> eyre::Result<()> {
 
 #[test]
 fn test_square_fibonachi() -> eyre::Result<()> {
+    const FIB_STEPS: usize = 1024;
+
     color_eyre::install()?;
     tracing_subscriber::fmt().init();
     test_script_disprove_distorted::<
-        { SquareFibonacciScript::<1024>::INPUT_SIZE },
-        { SquareFibonacciScript::<1024>::OUTPUT_SIZE },
-        SquareFibonacciScript<1024>,
+        { SquareFibonacciScript::<FIB_STEPS>::INPUT_SIZE },
+        { SquareFibonacciScript::<FIB_STEPS>::OUTPUT_SIZE },
+        SquareFibonacciScript<FIB_STEPS>,
     >()
 }
 

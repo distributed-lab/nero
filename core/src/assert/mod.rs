@@ -16,8 +16,8 @@ use bitcoin::{
 use bitcoin_splitter::split::script::SplitableScript;
 
 use crate::{
-    assert::payout_script::PayoutScript, disprove::form_disprove_scripts_distorted, treepp::*,
-    UNSPENDABLE_KEY,
+    assert::payout_script::PayoutScript, disprove::form_disprove_scripts_distorted_with_seed,
+    treepp::*, UNSPENDABLE_KEY,
 };
 
 use crate::disprove::{form_disprove_scripts, DisproveScript};
@@ -105,13 +105,18 @@ impl<const I: usize, const O: usize, S: SplitableScript<I, O>> AssertTransaction
         }
     }
 
-    pub fn with_options_distorted(
+    pub fn with_options_distorted<
+        Seed: Sized + Default + AsMut<[u8]> + Copy,
+        Rng: rand::SeedableRng<Seed = Seed> + rand::Rng,
+    >(
         input: Script,
         operator_pubkey: XOnlyPublicKey,
         amount: Amount,
         options: Options,
+        seed: Seed,
     ) -> (Self, usize) {
-        let (disprove_scripts, idx) = form_disprove_scripts_distorted::<I, O, S>(input.clone());
+        let (disprove_scripts, idx) =
+            form_disprove_scripts_distorted_with_seed::<I, O, S, Seed, Rng>(input.clone(), seed);
         let payout_script = PayoutScript::with_locktime(operator_pubkey, options.payout_locktime);
         (
             Self {

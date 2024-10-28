@@ -5,7 +5,7 @@ use bitcoin::{
     consensus::{Decodable, Encodable},
     hashes::Hash,
     io::Cursor,
-    key::rand::thread_rng,
+    key::rand::{rngs::SmallRng, thread_rng},
     secp256k1::SecretKey,
     Address, Amount, Network, OutPoint, ScriptBuf, Transaction, TxOut, Txid, XOnlyPublicKey,
 };
@@ -44,12 +44,17 @@ pub fn assert_tx(ctx: Context, args: AssertTxArgs) -> eyre::Result<()> {
     let opts = Options::default();
 
     // FIXME(Velnbur): make this optionally valid
-    let (assert, invalid_chunk_idx) =
-        AssertTransaction::<
-            { SquareFibonacciScript::<1024>::INPUT_SIZE },
-            { SquareFibonacciScript::<1024>::OUTPUT_SIZE },
-            SquareFibonacciScript<1024>,
-        >::with_options_distorted(input_script, args.pubkey, args.amount, opts);
+    let (assert, invalid_chunk_idx) = AssertTransaction::<
+        { SquareFibonacciScript::<1024>::INPUT_SIZE },
+        { SquareFibonacciScript::<1024>::OUTPUT_SIZE },
+        SquareFibonacciScript<1024>,
+    >::with_options_distorted::<[u8; 32], SmallRng>(
+        input_script,
+        args.pubkey,
+        args.amount,
+        opts,
+        [1; 32],
+    );
 
     let assert_output_address = Address::from_script(
         &assert.txout(ctx.secp_ctx()).script_pubkey,
