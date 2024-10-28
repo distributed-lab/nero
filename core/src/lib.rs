@@ -1,5 +1,6 @@
 use bitcoin::XOnlyPublicKey;
 use once_cell::sync::Lazy;
+
 pub mod assert;
 pub mod disprove;
 
@@ -16,7 +17,7 @@ pub mod treepp {
 // FIXME(Velnbur): Use really non spendable key. For example checkout:
 // 1. https://github.com/nomic-io/nomic/blob/5ba8b661e6d9ffb6b9eb39c13247cccefa5342a9/src/babylon/mod.rs#L451
 pub static UNSPENDABLE_KEY: Lazy<XOnlyPublicKey> = Lazy::new(|| {
-    "1e37ec522cb319c66e1a21077a2ba05c070efa5c018d5bc8d002250f5ca0c7dc"
+    "50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0"
         .parse()
         .unwrap()
 });
