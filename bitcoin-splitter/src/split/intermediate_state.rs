@@ -54,8 +54,8 @@ impl IntermediateState {
 
     /// Creates a new instance of the IntermediateState based on the given
     /// script and the stack and altstack after the execution of the script
-    pub fn from_inject_script(inject_script: &Script) -> Self {
-        let result = execute_script(inject_script.clone());
+    pub fn from_inject_script(inject_script: Script) -> Self {
+        let result = execute_script(inject_script);
 
         Self {
             stack: result.main_stack.clone(),

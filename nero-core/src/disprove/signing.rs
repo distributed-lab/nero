@@ -10,7 +10,7 @@ const MAX_STACK_ELEMENT_VALUE: u32 = (1 << 31) - 1;
 /// Struct handling information about a single u32 element in the state array.
 /// Namely, besides the element itself, it also contains the public key, secret key,
 /// and the signature of the element.
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct SignedStackElement {
     pub stack_element: u32,
     pub encoding: Message,
@@ -66,7 +66,7 @@ impl SignedStackElement {
 /// u32 values (both in mainstack and altstack), but this struct
 /// also contains the public keys, secret keys, and signatures
 /// of the elements in the state array.
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct SignedIntermediateState {
     pub stack: Vec<SignedStackElement>,
     pub altstack: Vec<SignedStackElement>,
@@ -74,12 +74,12 @@ pub struct SignedIntermediateState {
 
 impl SignedIntermediateState {
     /// Creates a new [`SignedIntermediateState`] from the given intermediate state
-    pub fn sign(state: &IntermediateState) -> Self {
+    pub fn sign(state: IntermediateState) -> Self {
         Self::sign_fn(state, SignedStackElement::sign)
     }
 
     /// Creates a new [`SignedIntermediateState`] from the given intermediate state
-    pub fn sign_with_seed<Seed, Rng>(state: &IntermediateState, seed: Seed) -> Self
+    pub fn sign_with_seed<Seed, Rng>(state: IntermediateState, seed: Seed) -> Self
     where
         Seed: Sized + Default + AsMut<[u8]> + Copy,
         Rng: rand::SeedableRng<Seed = Seed> + rand::Rng,
@@ -93,7 +93,7 @@ impl SignedIntermediateState {
     ///
     /// The function takes the mainstack and altstack, converts them to the array of
     /// `u32` elements and applies the signing function to each element.
-    fn sign_fn<F>(state: &IntermediateState, sign_fn: F) -> Self
+    fn sign_fn<F>(state: IntermediateState, sign_fn: F) -> Self
     where
         F: Fn(u32) -> SignedStackElement + Clone,
     {
@@ -119,7 +119,22 @@ impl SignedIntermediateState {
 
     /// Script that pushes zipped signature and message to the stack for
     /// each signed element in the stack and altstack.
-    pub fn witness_script(&self) -> Script {
+    pub fn witness_elements(&self) -> Vec<Vec<u8>> {
+        let mut elements = Vec::new();
+        // Pushing the stack
+        for element in self.stack.clone() {
+            elements.extend(element.signature.to_witness_stack_elements());
+        }
+
+        // Pushing the altstack
+        for element in self.altstack.clone().into_iter().rev() {
+            elements.extend(element.signature.to_witness_stack_elements());
+        }
+
+        elements
+    }
+
+    pub fn to_script_sig(&self) -> Script {
         script! {
             // Pushing the stack
             for element in self.stack.clone() {
@@ -132,6 +147,7 @@ impl SignedIntermediateState {
             }
         }
     }
+
 
     /// Script for verification of the witness script. Additionally,
     /// the verification leaves the original stack and altstack of

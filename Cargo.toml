@@ -5,9 +5,9 @@ members = [
 	"bitcoin-winternitz",
 	"bitcoin-scriptexec",
 	"bitcoin-testscripts",
-	"core",
+	"nero-core",
 	"bitcoin-utils",
-	"nero-cli",
+	# "nero-cli",
 ]
 resolver = "2"
 
