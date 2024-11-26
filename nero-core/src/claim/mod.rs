@@ -45,9 +45,7 @@ impl Claim {
         Self {
             amount: ctx.staked_amount
                 + fee_rate
-                    .checked_mul_by_weight(
-                        ctx.assert_tx_weight + ctx.largest_disprove_weight,
-                    )
+                    .checked_mul_by_weight(ctx.assert_tx_weight + ctx.largest_disprove_weight)
                     .unwrap(),
             operator_pubkey: ctx.operator_pubkey.into(),
             comittee_aggpubkey: ctx.comittee_aggpubkey(),
@@ -214,7 +212,7 @@ impl FundedClaim {
 
         taptree
             .control_block(&(
-                self.optimistic_payout_script().to_script(), 
+                self.optimistic_payout_script().to_script(),
                 LeafVersion::TapScript,
             ))
             .expect("taptree was constructed including assert script!")

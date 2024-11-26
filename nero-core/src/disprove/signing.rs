@@ -148,7 +148,6 @@ impl SignedIntermediateState {
         }
     }
 
-
     /// Script for verification of the witness script. Additionally,
     /// the verification leaves the original stack and altstack of
     /// the intermediate state.

@@ -13,10 +13,13 @@ use bitcoin_splitter::split::script::SplitableScript;
 use musig2::{secp::Point, KeyAggContext};
 
 use crate::{
-    assert::Assert, disprove::{
+    assert::Assert,
+    disprove::{
         form_disprove_scripts_distorted_with_seed, form_disprove_scripts_with_seed,
         signing::SignedIntermediateState, Disprove, DisproveScript,
-    }, payout::PAYOUT_APPROX_WEIGHT, treepp::*
+    },
+    payout::PAYOUT_APPROX_WEIGHT,
+    treepp::*,
 };
 
 /// Global context of BitVM2 flow.
@@ -133,7 +136,11 @@ impl<S: SplitableScript, C: Verification> Context<S, C> {
             secp: ctx,
             operator_pubkey,
             operator_script_pubkey,
-            largest_disprove_weight: disprove_txs.iter().map(|tx| tx.compute_weigth()).max().unwrap(),
+            largest_disprove_weight: disprove_txs
+                .iter()
+                .map(|tx| tx.compute_weigth())
+                .max()
+                .unwrap(),
             disprove_scripts,
             claim_challenge_period,
             assert_challenge_period,
@@ -211,7 +218,11 @@ impl<S: SplitableScript, C: Verification> Context<S, C> {
             secp: ctx,
             operator_pubkey,
             operator_script_pubkey,
-            largest_disprove_weight: disprove_txs.iter().map(|tx| tx.compute_weigth()).max().unwrap(),
+            largest_disprove_weight: disprove_txs
+                .iter()
+                .map(|tx| tx.compute_weigth())
+                .max()
+                .unwrap(),
             disprove_scripts,
             claim_challenge_period,
             assert_challenge_period,
