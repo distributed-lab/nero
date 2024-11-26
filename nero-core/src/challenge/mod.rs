@@ -2,15 +2,10 @@
 
 use bitcoin::{
     absolute::LockTime,
-    key::{Keypair, Parity, Secp256k1, Verification},
-    secp256k1,
-    sighash::{Prevouts, SighashCache},
-    taproot::Signature,
     transaction::Version,
-    Amount, OutPoint, ScriptBuf, Sequence, TapSighashType, Transaction, TxIn, TxOut, Txid, Witness,
-    XOnlyPublicKey,
+    Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid,
+    Witness,
 };
-use musig2::secp256k1::{SecretKey, Signing};
 
 pub struct Challenge {
     /// ID of Claim transaction.
@@ -23,22 +18,19 @@ pub struct Challenge {
     /// Public key of operator which will get
     /// [`Challenge::assert_tx_fee_amount`] after the challenge transcation is
     /// published.
-    operator_pubkey: XOnlyPublicKey,
+    operator_script_pubkey: ScriptBuf,
 }
 
 impl Challenge {
-    pub fn new(operator: XOnlyPublicKey, claim_txid: Txid, assert_tx_fee_amount: Amount) -> Self {
+    pub fn new(operator: ScriptBuf, claim_txid: Txid, assert_tx_fee_amount: Amount) -> Self {
         Self {
             claim_txid,
             assert_tx_fee_amount,
-            operator_pubkey: operator,
+            operator_script_pubkey: operator,
         }
     }
 
-    pub fn to_unsigned_tx<C>(&self, ctx: &Secp256k1<C>) -> Transaction
-    where
-        C: secp256k1::Verification,
-    {
+    pub fn to_unsigned_tx(&self) -> Transaction {
         Transaction {
             version: Version::ONE,
             lock_time: LockTime::ZERO,
@@ -50,52 +42,9 @@ impl Challenge {
             }],
             output: vec![TxOut {
                 value: self.assert_tx_fee_amount,
-                script_pubkey: ScriptBuf::new_p2tr(ctx, self.operator_pubkey, None),
+                script_pubkey: self.operator_script_pubkey.clone(),
             }],
         }
-    }
-
-    pub fn sign<C: Signing + Verification>(
-        self,
-        ctx: &Secp256k1<C>,
-        operator_seckey: &SecretKey,
-        claim_challenge_txout: &TxOut,
-    ) -> SignedChallenge {
-        let unsigned_tx = self.to_unsigned_tx(ctx);
-        let sighash_type = TapSighashType::SinglePlusAnyoneCanPay;
-        let sighash = SighashCache::new(&unsigned_tx)
-            .taproot_key_spend_signature_hash(
-                /* challenge transaciton always has this first input */ 0,
-                &Prevouts::One(
-                    /* Challenge tx has only one input */ 0,
-                    claim_challenge_txout,
-                ),
-                sighash_type,
-            )
-            .unwrap();
-
-        let (xonly, parity) = operator_seckey.public_key(ctx).x_only_public_key();
-        let operator_seckey = if parity == Parity::Odd {
-            operator_seckey.negate()
-        } else {
-            *operator_seckey
-        };
-
-        let signature = ctx.sign_schnorr(
-            &sighash.into(),
-            &Keypair::from_secret_key(ctx, &operator_seckey),
-        );
-
-        ctx.verify_schnorr(&signature, &sighash.into(), &xonly)
-            .unwrap();
-
-        SignedChallenge::new(
-            self,
-            Signature {
-                signature,
-                sighash_type,
-            },
-        )
     }
 }
 
@@ -103,22 +52,23 @@ pub struct SignedChallenge {
     /// Unsigned challenge transaciton.
     inner: Challenge,
 
-    /// Signature of challenge transaction signed by operator's pubkey.
-    signature: Signature,
+    /// Wintess for Single + AnyoneCanPay input.
+    input_witness: Witness,
 }
 
 impl SignedChallenge {
-    pub(crate) fn new(inner: Challenge, signature: Signature) -> Self {
-        Self { inner, signature }
+    pub(crate) fn new(inner: Challenge, witness: Witness) -> Self {
+        Self {
+            inner,
+            input_witness: witness,
+        }
     }
 
-    pub fn to_tx<C: Verification>(&self, ctx: &Secp256k1<C>) -> Transaction {
-        let mut unsigned_tx = self.inner.to_unsigned_tx(ctx);
+    pub fn to_tx(&self) -> Transaction {
+        let mut unsigned_tx = self.inner.to_unsigned_tx();
 
         // add signature to tx, converting it to signed one.
-        unsigned_tx.input[0]
-            .witness
-            .push(self.signature.serialize());
+        unsigned_tx.input[0].witness = self.input_witness.clone();
 
         unsigned_tx
     }

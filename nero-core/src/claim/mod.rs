@@ -11,9 +11,12 @@ use bitcoin::{
 use bitcoin_splitter::split::script::SplitableScript;
 
 use crate::{
-    context::Context, disprove::signing::SignedIntermediateState, scripts::OP_CHECKCOVENANTVERIFY,
-    treepp::*, UNSPENDABLE_KEY,
+    context::Context, disprove::signing::SignedIntermediateState, treepp::*, UNSPENDABLE_KEY,
 };
+
+use self::scripts::{AssertScript, OptimisticPayoutScript};
+
+pub(crate) mod scripts;
 
 pub struct Claim {
     /// Amount stacked for claim
@@ -25,8 +28,8 @@ pub struct Claim {
     /// Claim transaction challenge period.
     claim_challenge_period: Height,
 
-    /// Operator's pubkey
-    operator_pubkey: XOnlyPublicKey,
+    /// Output of the operator's wallet for spending
+    operator_script_pubkey: Script,
 
     /// All signed states
     signed_states: Vec<SignedIntermediateState>,
@@ -44,20 +47,17 @@ impl Claim {
                         ctx.assert_tx_weight + *ctx.disprove_weights.iter().max().unwrap(),
                     )
                     .unwrap(),
+            operator_script_pubkey: ctx.operator_script_pubkey.clone(),
             comittee_aggpubkey: ctx.comittee_aggpubkey(),
             claim_challenge_period: ctx.claim_challenge_period,
-            operator_pubkey: ctx.operator_pubkey.x_only_public_key().0,
             signed_states: ctx.signed_states(),
         }
     }
 
-    pub fn challenge_output<C>(&self, ctx: &Secp256k1<C>) -> TxOut
-    where
-        C: Verification,
-    {
+    pub fn challenge_output(&self) -> TxOut {
         TxOut {
             value: Amount::from_sat(1000),
-            script_pubkey: Script::new_p2tr(ctx, self.operator_pubkey, None),
+            script_pubkey: self.operator_script_pubkey.clone(),
         }
     }
 
@@ -75,27 +75,29 @@ impl Claim {
 
     fn taptree<C: Verification>(&self, ctx: &Secp256k1<C>) -> TaprootSpendInfo {
         TaprootBuilder::new()
-            .add_leaf(1, self.optimistic_payout_script())
+            .add_leaf(1, self.optimistic_payout_script().to_script())
             .expect("Depth is right")
-            .add_leaf(1, self.assert_script())
+            .add_leaf(1, self.assert_script().into_script())
             .expect("Depth is right")
             .finalize(ctx, *UNSPENDABLE_KEY)
             .unwrap()
     }
 
-    pub fn optimistic_payout_script(&self) -> Script {
-        optimistic_payout_script(self.claim_challenge_period, self.comittee_aggpubkey)
+    pub fn optimistic_payout_script(&self) -> OptimisticPayoutScript {
+        OptimisticPayoutScript::new(self.claim_challenge_period, self.comittee_aggpubkey)
     }
 
-    pub fn assert_script(&self) -> Script {
-        assert_script(self.comittee_aggpubkey, self.signed_states.iter())
+    pub fn assert_script(
+        &self,
+    ) -> AssertScript<'_, impl Iterator<Item = &'_ SignedIntermediateState>> {
+        AssertScript::new(self.comittee_aggpubkey, self.signed_states.iter())
     }
 
     pub fn to_unsigned_tx<C>(&self, ctx: &Secp256k1<C>) -> Transaction
     where
         C: Verification,
     {
-        let challenge_output = self.challenge_output(ctx);
+        let challenge_output = self.challenge_output();
         let assert_output = self.assert_output(ctx);
 
         Transaction {
@@ -109,36 +111,6 @@ impl Claim {
     }
 }
 
-/// Script which is spent in optimistic payout flow adter challenge period ends.
-fn optimistic_payout_script(claim_challenge_period: Height, aggpubkey: XOnlyPublicKey) -> Script {
-    script! {
-        { claim_challenge_period.value().to_le_bytes().to_vec() }
-        OP_CSV
-        OP_DROP
-        OP_DROP
-        // { OP_CHECKCOVENANTVERIFY(aggpubkey) }
-    }
-}
-
-/// `AssertScript` from original BitVM2 paper. Checks from stack  all
-/// Winternitz commitments for signed intermidiate states.
-fn assert_script<'a>(
-    aggpubkey: XOnlyPublicKey,
-    states: impl Iterator<Item = &'a SignedIntermediateState>,
-) -> Script {
-    script! {
-        { OP_CHECKCOVENANTVERIFY(aggpubkey) }
-        for state in states {
-            for element in &state.stack {
-                { element.public_key.checksig_verify_script_compact(&element.encoding) }
-            }
-            for element in &state.altstack {
-                { element.public_key.checksig_verify_script_compact(&element.encoding) }
-            }
-        }
-    }
-}
-
 pub struct FundedClaim {
     /// Inner clain transaction.
     claim: Claim,
@@ -146,7 +118,7 @@ pub struct FundedClaim {
     #[allow(dead_code)]
     input: Script,
     /// Funding input got from external wallet.
-    funding_input: TxIn,
+    funding_inputs: Vec<TxIn>,
     /// The change output created after funding the claim tx.
     change_output: TxOut,
 }
@@ -155,13 +127,13 @@ impl FundedClaim {
     /// Construct new funded claim transaction.
     pub fn new(
         claim: Claim,
-        funding_input: TxIn,
+        funding_inputs: Vec<TxIn>,
         change_output: TxOut,
         program_input: Script,
     ) -> Self {
         Self {
             claim,
-            funding_input,
+            funding_inputs,
             input: program_input,
             change_output,
         }
@@ -173,7 +145,6 @@ impl FundedClaim {
         C: Verification,
     {
         let mut unsigned_tx = self.claim.to_unsigned_tx(ctx);
-        let funding_input = self.funding_input.clone();
 
         // Fullfill the last elements of witness stack
         // for instruction in self.input.instructions() {
@@ -196,7 +167,7 @@ impl FundedClaim {
         //     }
         // }
 
-        unsigned_tx.input.push(funding_input);
+        unsigned_tx.input.clone_from(&self.funding_inputs);
         unsigned_tx.output.push(self.change_output.clone());
 
         unsigned_tx
@@ -207,11 +178,13 @@ impl FundedClaim {
         tx.compute_txid()
     }
 
-    pub fn optimistic_payout_script(&self) -> Script {
+    pub fn optimistic_payout_script(&self) -> OptimisticPayoutScript {
         self.claim.optimistic_payout_script()
     }
 
-    pub fn assert_script(&self) -> Script {
+    pub fn assert_script(
+        &self,
+    ) -> AssertScript<'_, impl Iterator<Item = &SignedIntermediateState>> {
         self.claim.assert_script()
     }
 
@@ -222,7 +195,7 @@ impl FundedClaim {
         let taptree = self.claim.taptree(ctx);
 
         taptree
-            .control_block(&(self.assert_script(), LeafVersion::TapScript))
+            .control_block(&(self.assert_script().into_script(), LeafVersion::TapScript))
             .expect("taptree was constructed including assert script!")
     }
 
@@ -236,7 +209,21 @@ impl FundedClaim {
         let taptree = self.claim.taptree(ctx);
 
         taptree
-            .control_block(&(self.optimistic_payout_script(), LeafVersion::TapScript))
+            .control_block(&(
+                self.optimistic_payout_script().to_script(),
+                LeafVersion::TapScript,
+            ))
             .expect("taptree was constructed including assert script!")
+    }
+
+    pub fn assert_output<C>(&self, ctx: &Secp256k1<C>) -> TxOut
+    where
+        C: Verification,
+    {
+        self.claim.assert_output(ctx)
+    }
+
+    pub(crate) fn challenge_output(&self) -> TxOut {
+        self.claim.challenge_output()
     }
 }

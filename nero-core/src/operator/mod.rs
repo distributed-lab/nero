@@ -1,6 +1,6 @@
 use bitcoin::{
     key::Secp256k1, relative::Height, secp256k1::PublicKey, taproot::LeafVersion, Amount, FeeRate,
-    Network, TapLeafHash, Transaction, TxIn, TxOut,
+    Network, Transaction, TxIn, TxOut, Witness,
 };
 use bitcoin_splitter::split::script::SplitableScript;
 use musig2::{
@@ -20,8 +20,6 @@ use crate::{
     treepp::*,
 };
 
-pub mod signer;
-
 pub struct OperatorConfig<Seed> {
     /// Network which this session is working.
     pub network: Network,
@@ -35,6 +33,8 @@ pub struct OperatorConfig<Seed> {
     pub assert_challenge_period: Height,
     /// Public keys of comitte for emulating covenants.
     pub comittee: Vec<PublicKey>,
+    /// Operator's wallet address
+    pub operator_script_pubkey: Script,
     /// Seed for random generator.
     pub seed: Seed,
 }
@@ -72,6 +72,38 @@ where
             config.assert_challenge_period,
             config.claim_challenge_period,
             pubkey,
+            config.operator_script_pubkey,
+            config.comittee,
+            config.seed,
+        );
+
+        Self {
+            secret_key: seckey,
+            context: ctx,
+        }
+    }
+
+    /// Create new operator with one random spendable disprove script.
+    pub fn new_distorted<Seed, Rng>(config: OperatorConfig<Seed>) -> Self
+    where
+        Seed: Sized + Default + AsMut<[u8]> + Copy,
+        Rng: rand::SeedableRng<Seed = Seed> + rand::Rng,
+    {
+        // FIXME(Velnbur): This RNG is generated from seed twice later. Should be
+        // fixed later.
+        let mut rng = Rng::from_seed(config.seed);
+        let secp_ctx = Secp256k1::new();
+
+        let (seckey, pubkey) = secp_ctx.generate_keypair(&mut rng);
+
+        let ctx = Context::compute_setup_distorted::<Seed, Rng>(
+            secp_ctx,
+            config.staked_amount,
+            config.input,
+            config.assert_challenge_period,
+            config.claim_challenge_period,
+            pubkey,
+            config.operator_script_pubkey,
             config.comittee,
             config.seed,
         );
@@ -119,29 +151,22 @@ impl<S: SplitableScript> UnfundedOperator<S> {
 
 /* STAGE 2: */
 
-/// After claim transaction is funded, operator and comitte can exchange
-/// nonces for partial schnorr signatures.
-pub struct NoncesAggregationOperator<S: SplitableScript> {
+/// After claim transaction is funded, operator waits for wallet to sign
+/// challenge transaction.
+pub struct ChallengeSigningOperator<S: SplitableScript> {
     inner: Operator<S>,
     // Funded, signed by wallet claim transcation.
-    claim_tx: FundedClaim,
-    // Challenge is signed by oparator
-    challenge_tx: SignedChallenge,
-    /// Secnonce generated from musig2 signature.
-    operator_secnonce: SecNonce,
+    claim: FundedClaim,
+    challenge: Challenge,
 }
 
-impl<S: SplitableScript> NoncesAggregationOperator<S> {
-    pub fn from_unfunded_operator<Rng>(
+impl<S: SplitableScript> ChallengeSigningOperator<S> {
+    pub fn from_challenge_singing_operator(
         operator: UnfundedOperator<S>,
-        funding_input: TxIn,
+        funding_input: Vec<TxIn>,
         change_output: TxOut,
         fee_rate: FeeRate,
-        rng: &mut Rng,
-    ) -> Self
-    where
-        Rng: rand::RngCore + rand::CryptoRng,
-    {
+    ) -> Self {
         let context = &operator.inner.context;
         let funded_claim = FundedClaim::new(
             operator.claim,
@@ -150,12 +175,6 @@ impl<S: SplitableScript> NoncesAggregationOperator<S> {
             context.input.clone(),
         );
         let claim_txid = funded_claim.compute_txid(&context.secp);
-        let agg_pubkey = context.comittee_aggpubkey::<Point>();
-
-        let secnonce = SecNonceBuilder::new(rng)
-            .with_seckey(operator.inner.secret_key)
-            .with_aggregated_pubkey(agg_pubkey)
-            .build();
 
         let assert_tx_weight = context.assert_tx_weight;
 
@@ -169,7 +188,7 @@ impl<S: SplitableScript> NoncesAggregationOperator<S> {
             .expect("At least one disprove script must be");
 
         let challenge_tx = Challenge::new(
-            context.operator_pubkey.into(),
+            context.operator_script_pubkey.clone(),
             claim_txid,
             fee_rate
                 .checked_mul_by_weight(*largest_disprove_weight + assert_tx_weight)
@@ -177,13 +196,51 @@ impl<S: SplitableScript> NoncesAggregationOperator<S> {
         );
 
         Self {
-            challenge_tx: challenge_tx.sign(
-                &context.secp,
-                &operator.inner.secret_key,
-                &funded_claim.to_tx(&context.secp).output[1],
-            ),
+            challenge: challenge_tx,
             inner: operator.inner,
-            claim_tx: funded_claim,
+            claim: funded_claim,
+        }
+    }
+
+    pub fn unsigned_challenge_tx(&self) -> Transaction {
+        self.challenge.to_unsigned_tx()
+    }
+}
+
+/* STAGE 3: */
+
+/// After challenge transaction is signed by wallet, operator and comitte
+/// can exchange nonces for partial schnorr signatures.
+pub struct NoncesAggregationOperator<S: SplitableScript> {
+    inner: Operator<S>,
+    // Funded, signed by wallet claim transcation.
+    claim: FundedClaim,
+    challenge_tx: SignedChallenge,
+    /// Secnonce generated from musig2 signature.
+    operator_secnonce: SecNonce,
+}
+
+impl<S: SplitableScript> NoncesAggregationOperator<S> {
+    pub fn from_challenge_singing_operator<Rng>(
+        operator: ChallengeSigningOperator<S>,
+        challenge_tx_witness: Witness,
+        rng: &mut Rng,
+    ) -> Self
+    where
+        Rng: rand::RngCore + rand::CryptoRng,
+    {
+        let context = &operator.inner.context;
+        let agg_pubkey = context.comittee_aggpubkey::<Point>();
+
+        let secnonce = SecNonceBuilder::new(rng)
+            .with_seckey(operator.inner.secret_key)
+            .with_aggregated_pubkey(agg_pubkey)
+            .build();
+
+        Self {
+            challenge_tx: SignedChallenge::new(operator.challenge, challenge_tx_witness),
+            inner: operator.inner,
+            claim: operator.claim,
             operator_secnonce: secnonce,
         }
     }
@@ -194,7 +251,7 @@ impl<S: SplitableScript> NoncesAggregationOperator<S> {
     }
 }
 
-/* STAGE 3: */
+/* STAGE 4: */
 
 /// After nonces are exchanged, operator can create partial signatures for
 /// transaction and wait for other signatures from comittee.
@@ -233,7 +290,7 @@ where
         fee_rate: FeeRate,
     ) -> Self {
         let context = &operator.inner.context;
-        let claim_txid = operator.claim_tx.compute_txid(&context.secp);
+        let claim_txid = operator.claim.compute_txid(&context.secp);
         nonces.push(operator.public_nonce());
         let aggnonce = AggNonce::sum(nonces);
 
@@ -241,7 +298,7 @@ where
         let payout_optimistic_tx = PayoutOptimistic::from_context(context, claim_txid);
         let partial_payout_optimistic_sig = payout_optimistic_tx.sign_partial_from_claim(
             &context.secp,
-            &operator.claim_tx,
+            &operator.claim,
             context.comittee.clone(),
             &aggnonce,
             operator.inner.secret_key,
@@ -263,15 +320,13 @@ where
         );
         let partial_assert_sig = assert_tx.sign_partial_from_claim(
             &context.secp,
-            &operator.claim_tx,
+            &operator.claim,
             context.comittee.clone(),
             &aggnonce,
             operator.inner.secret_key,
             operator.operator_secnonce.clone(),
         );
-
-        let assert_unsigned_tx = assert_tx.to_unsigned_tx(&context.secp);
-        let assert_txid = assert_unsigned_tx.compute_txid();
+        let assert_txid = assert_tx.compute_txid(&context.secp);
 
         // Create and sign payout transaction.
         let payout_tx = Payout::from_context(context, assert_txid);
@@ -285,14 +340,13 @@ where
         );
 
         // Create and sign disprove transaction.
-        let assert_output = &assert_unsigned_tx.output[0];
+        let assert_output = assert_tx.output(&context.secp);
         let taproot = assert_tx.taproot(&context.secp);
         let (partial_disprove_sigs, disprove_txs): (Vec<_>, Vec<_>) = context
             .disprove_scripts
             .iter()
             .map(|script| {
                 let script_pubkey = script.to_script_pubkey();
-                let leaf_hash = TapLeafHash::from_script(&script_pubkey, LeafVersion::TapScript);
                 let tx = Disprove::new(
                     script,
                     assert_txid,
@@ -308,8 +362,7 @@ where
                 (
                     tx.sign_partial(
                         &context.secp,
-                        assert_output,
-                        leaf_hash,
+                        &assert_output,
                         context.comittee.clone(),
                         &aggnonce,
                         operator.inner.secret_key,
@@ -322,7 +375,7 @@ where
 
         Self {
             inner: operator.inner,
-            claim_tx: operator.claim_tx,
+            claim_tx: operator.claim,
             challenge_tx: operator.challenge_tx,
             assert_tx,
             partial_assert_sig,
@@ -336,19 +389,23 @@ where
         }
     }
 
-    pub fn assert_tx(&self) -> &Assert {
+    pub fn unsigned_assert_tx(&self) -> &Assert {
         &self.assert_tx
     }
 
-    pub fn payout_optimistic_tx(&self) -> &PayoutOptimistic {
+    pub fn unsigned_payout_optimistic(&self) -> &PayoutOptimistic {
         &self.payout_optimistic_tx
     }
 
-    pub fn payout_tx(&self) -> &Payout {
+    pub fn unsigned_payout_optimistic_tx(&self) -> Transaction {
+        self.payout_optimistic_tx.to_unsigned_tx()
+    }
+
+    pub fn unsigned_payout_tx(&self) -> &Payout {
         &self.payout_tx
     }
 
-    pub fn disprove_txs(&self) -> &[Disprove] {
+    pub fn unsigned_disprove_txs(&self) -> &[Disprove] {
         &self.disprove_txs
     }
 
@@ -369,12 +426,13 @@ where
     }
 }
 
-/* STAGE 4: */
+/* STAGE 5: */
 
 /// After receiving all partial signature from comittee operator can
 /// construct final "signed" versions of transaction and publish the claim
 /// one.
 pub struct FinalOperator<S: SplitableScript> {
+    #[allow(dead_code)]
     inner: Operator<S>,
 
     claim_tx: FundedClaim,
@@ -442,28 +500,19 @@ impl<S: SplitableScript> FinalOperator<S> {
         let context = &operator.inner.context;
         let keyaggctx = context.comittee_keyaggctx();
 
-        let claim_tx = operator.claim_tx.to_tx(&context.secp);
-        let claim_assert_txout = &claim_tx.output[0];
-        let claim_challenge_txout = &claim_tx.output[1];
-
-        let claim_assert_script = operator.claim_tx.assert_script();
-        let claim_assert_leaf_hash =
-            TapLeafHash::from_script(&claim_assert_script, LeafVersion::TapScript);
         let claim_assert_script_control_block =
             operator.claim_tx.assert_script_control_block(&context.secp);
 
         let claim_payout_script = operator.claim_tx.optimistic_payout_script();
-        let claim_payout_leaf_hash =
-            TapLeafHash::from_script(&claim_payout_script, LeafVersion::TapScript);
         let claim_payout_control_block = operator
             .claim_tx
             .optimistic_payout_script_control_block(&context.secp);
 
-        let assert_sighash =
-            operator
-                .assert_tx
-                .sighash(&context.secp, claim_assert_txout, claim_assert_leaf_hash);
-        let claim_payout_script = operator.claim_tx.optimistic_payout_script();
+        let assert_sighash = operator.assert_tx.sighash(
+            &context.secp,
+            &operator.claim_tx.assert_output(&context.secp),
+            operator.claim_tx.assert_script(),
+        );
         let assert_aggsig: CompactSignature = aggregate_partial_signatures(
             &keyaggctx,
             &operator.aggnonce,
@@ -471,20 +520,18 @@ impl<S: SplitableScript> FinalOperator<S> {
             assert_sighash,
         )
         .unwrap();
-        let assert_txout = &operator.assert_tx.to_unsigned_tx(&context.secp).output[0];
-        let assert_payout_leaf_hash =
-            TapLeafHash::from_script(&operator.assert_tx.payout_script(), LeafVersion::TapScript);
+        let assert_txout = &operator.assert_tx.output(&context.secp);
         let assert_tx = SignedAssert::new(
             operator.assert_tx,
             assert_aggsig,
-            claim_assert_script,
+            operator.claim_tx.assert_script(),
             claim_assert_script_control_block,
         );
 
         let payout_sighash =
             operator
                 .payout_tx
-                .sighash(&context.secp, assert_txout, assert_payout_leaf_hash);
+                .sighash(&context.secp, assert_txout, assert_tx.payout_script());
         let payout_aggsig: CompactSignature = aggregate_partial_signatures(
             &keyaggctx,
             &operator.aggnonce,
@@ -495,7 +542,7 @@ impl<S: SplitableScript> FinalOperator<S> {
         let payout_operator_sig = operator.payout_tx.sign_operator(
             &context.secp,
             assert_txout,
-            assert_payout_leaf_hash,
+            assert_tx.payout_script(),
             &operator.inner.secret_key,
         );
         let payout_tx = SignedPayout::new(
@@ -510,13 +557,8 @@ impl<S: SplitableScript> FinalOperator<S> {
             .disprove_txs
             .into_iter()
             .zip(signatures.partial_disprove_sigs)
-            .enumerate()
-            .map(|(idx, (tx, sigs))| {
-                let assert_disprove_leaf_hash = TapLeafHash::from_script(
-                    &assert_tx.disprove_script(idx).to_script_pubkey(),
-                    LeafVersion::TapScript,
-                );
-                let sighash = tx.sighash(assert_txout, assert_disprove_leaf_hash);
+            .map(|(tx, sigs)| {
+                let sighash = tx.sighash(assert_txout);
 
                 let covenants_sig: CompactSignature =
                     aggregate_partial_signatures(&keyaggctx, &operator.aggnonce, sigs, sighash)
@@ -527,10 +569,9 @@ impl<S: SplitableScript> FinalOperator<S> {
             .collect::<Vec<_>>();
 
         let payout_optimistic_assert_output_sighash = operator.payout_optimistic_tx.assert_sighash(
-            &context.secp,
-            claim_assert_txout,
-            claim_challenge_txout,
-            claim_payout_leaf_hash,
+            &operator.claim_tx.assert_output(&context.secp),
+            &operator.claim_tx.challenge_output(),
+            &claim_payout_script,
         );
         let payout_optimistic_aggsig: CompactSignature = aggregate_partial_signatures(
             &keyaggctx,
@@ -539,9 +580,10 @@ impl<S: SplitableScript> FinalOperator<S> {
             payout_optimistic_assert_output_sighash,
         )
         .unwrap();
+
         let payout_optimistic_operator_sig = operator.payout_optimistic_tx.sign_challenge_input(
-            claim_assert_txout,
-            claim_challenge_txout,
+            &operator.claim_tx.assert_output(&context.secp),
+            &operator.claim_tx.challenge_output(),
             &context.secp,
             operator.inner.secret_key,
         );
@@ -549,7 +591,7 @@ impl<S: SplitableScript> FinalOperator<S> {
             operator.payout_optimistic_tx,
             payout_optimistic_aggsig,
             payout_optimistic_operator_sig,
-            claim_payout_script,
+            &claim_payout_script,
             claim_payout_control_block,
         );
 
@@ -586,9 +628,5 @@ impl<S: SplitableScript> FinalOperator<S> {
 
     pub fn payout_tx(&self) -> &SignedPayout {
         &self.payout_tx
-    }
-
-    pub fn inner(&self) -> &Operator<S> {
-        &self.inner
     }
 }

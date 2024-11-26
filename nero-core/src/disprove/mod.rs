@@ -4,7 +4,7 @@ use bitcoin::{
     absolute::LockTime,
     key::{constants::SCHNORR_SIGNATURE_SIZE, Secp256k1, TweakedPublicKey, Verification},
     sighash::{Prevouts, SighashCache},
-    taproot::{ControlBlock, Signature},
+    taproot::{ControlBlock, LeafVersion, Signature},
     transaction::Version,
     Amount, OutPoint, Sequence, TapLeafHash, TapSighashType, Transaction, TxIn, TxOut, Txid,
     Weight, Witness, XOnlyPublicKey,
@@ -79,13 +79,12 @@ impl Disprove {
         &self,
         ctx: &Secp256k1<C>,
         assert_output: &TxOut,
-        assert_disprove_leaf_hash: TapLeafHash,
         comittee_pubkeys: Vec<PublicKey>,
         agg_nonce: &AggNonce,
         secret_key: SecretKey,
         secnonce: SecNonce,
     ) -> PartialSignature {
-        let sighash = self.sighash(assert_output, assert_disprove_leaf_hash);
+        let sighash = self.sighash(assert_output);
 
         schnorr_sign_partial(
             ctx,
@@ -97,21 +96,17 @@ impl Disprove {
         )
     }
 
-    pub(crate) fn sighash(
-        &self,
-        assert_txout: &TxOut,
-        assert_disprove_leaf_hash: TapLeafHash,
-    ) -> bitcoin::TapSighash {
+    pub(crate) fn sighash(&self, assert_txout: &TxOut) -> bitcoin::TapSighash {
         let unsigned_tx = self.to_unsigned_tx();
-        let sighash = SighashCache::new(&unsigned_tx)
+
+        SighashCache::new(&unsigned_tx)
             .taproot_script_spend_signature_hash(
-                /* assert output with taproot should be first */ 0,
+                /* assert output spending input is the first one */ 0,
                 &Prevouts::All(&[assert_txout]),
-                assert_disprove_leaf_hash,
-                TapSighashType::Single,
+                TapLeafHash::from_script(&self.script.to_script_pubkey(), LeafVersion::TapScript),
+                TapSighashType::All,
             )
-            .unwrap();
-        sighash
+            .unwrap()
     }
 
     fn unsigned_tx_with_witness(&self) -> Transaction {
@@ -155,7 +150,7 @@ impl SignedDisprove {
             inner,
             covenants_sig: Signature {
                 signature: covenants_sig.into(),
-                sighash_type: TapSighashType::Default,
+                sighash_type: TapSighashType::All,
             },
         }
     }
@@ -465,4 +460,10 @@ where
 
     // Returning the result
     (disprove_scripts, distorted_shard_id)
+}
+
+pub fn extract_signed_states(
+    disproves: &[DisproveScript],
+) -> impl DoubleEndedIterator<Item = &SignedIntermediateState> {
+    iter::once(&disproves[0].from_state).chain(disproves.iter().map(|d| &d.to_state))
 }

@@ -45,52 +45,10 @@ impl fmt::Display for ExecuteInfo {
 /// Executes the given script and returns the result of the execution
 /// (success, error, stack, etc.)
 pub fn execute_script(script: ScriptBuf) -> ExecuteInfo {
-    let mut exec = Exec::new(
-        ExecCtx::Tapscript,
-        Options {
-            // TODO(ZamDimon): Figure our how to optimize stack_to_script function to avoid disabling require_minimal
-            // TODO(ZamDimon): Currently, Winternitz does not work with the stack limit
-            require_minimal: false,
-            enforce_stack_limit: false,
-            ..Default::default()
-        },
-        TxTemplate {
-            tx: Transaction {
-                version: bitcoin::transaction::Version::TWO,
-                lock_time: bitcoin::locktime::absolute::LockTime::ZERO,
-                input: vec![],
-                output: vec![],
-            },
-            prevouts: vec![],
-            input_idx: 0,
-            taproot_annex_scriptleaf: Some((TapLeafHash::all_zeros(), None)),
-        },
-        script,
-        vec![],
-    )
-    .expect("error when creating the execution body");
-
-    // Execute all the opcodes while possible
-    loop {
-        if exec.exec_next().is_err() {
-            break;
-        }
-    }
-
-    // Obtaining the result of the execution
-    let result = exec.result().unwrap();
-
-    ExecuteInfo {
-        success: result.success,
-        error: result.error.clone(),
-        main_stack: exec.stack().clone(),
-        alt_stack: exec.altstack().clone(),
-        stats: exec.stats().clone(),
-    }
+    execute_script_with_leaf(script, TapLeafHash::all_zeros())
 }
-/// Executes the given script and returns the result of the execution
-/// (success, error, stack, etc.)
-pub fn execute_script_with_script(script: ScriptBuf) -> ExecuteInfo {
+
+pub fn execute_script_with_leaf(script: ScriptBuf, leaf_hash: TapLeafHash) -> ExecuteInfo {
     let mut exec = Exec::new(
         ExecCtx::Tapscript,
         Options {
@@ -109,7 +67,7 @@ pub fn execute_script_with_script(script: ScriptBuf) -> ExecuteInfo {
             },
             prevouts: vec![],
             input_idx: 0,
-            taproot_annex_scriptleaf: Some((TapLeafHash::all_zeros(), None)),
+            taproot_annex_scriptleaf: Some((leaf_hash, None)),
         },
         script,
         vec![],

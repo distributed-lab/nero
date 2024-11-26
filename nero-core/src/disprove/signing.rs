@@ -137,12 +137,12 @@ impl SignedIntermediateState {
     pub fn to_script_sig(&self) -> Script {
         script! {
             // Pushing the stack
-            for element in self.stack.clone() {
+            for element in &self.stack {
                 { element.signature.to_script_sig() }
             }
 
             // Pushing the altstack
-            for element in self.altstack.clone().into_iter().rev() {
+            for element in self.altstack.iter().rev() {
                 { element.signature.to_script_sig() }
             }
         }
@@ -156,14 +156,14 @@ impl SignedIntermediateState {
         script! {
             // For each element, we need to push the public key and run the
             // Winternitz verification script
-            for element in self.altstack.clone() {
+            for element in &self.altstack {
                 { checksig_verify_script(&element.public_key) }
                 { Message::recovery_script() }
                 OP_TOALTSTACK
             }
 
             // Do the same for the mainstack
-            for element in self.stack.clone().into_iter().rev() {
+            for element in self.stack.iter().rev() {
                 { checksig_verify_script(&element.public_key) }
                 { Message::recovery_script() }
                 OP_TOALTSTACK

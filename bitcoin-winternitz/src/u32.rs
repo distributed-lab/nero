@@ -121,6 +121,12 @@ impl PublicKey {
         let skip = msg.count_zero_limbs_from_left();
         checksig_verify_script_compact(skip, self)
     }
+
+    /// Construct `script_pubkey` signature verification which uses
+    /// full encoding.
+    pub fn checksig_verify_script(&self) -> Script {
+        checksig_verify_script(self)
+    }
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Default, Copy)]
@@ -265,15 +271,24 @@ impl Signature {
     fn to_witness_stack_elements_skipping(self, skipping: usize) -> Vec<Vec<u8>> {
         let mut elements = Vec::new();
 
+        // TODO(Velnbur): later let's move it somewhere else
+        fn push_element(idx: usize, elements: &mut Vec<Vec<u8>>, sig: &Signature) {
+            elements.push(sig.sig[idx].to_byte_array().to_vec());
+            let msg_byte = sig.msg.0[idx];
+            if msg_byte == 0 {
+                elements.push(Vec::new());
+            } else {
+                elements.push(msg_byte.to_le_bytes().to_vec());
+            }
+        }
+
         // Keep all the elements of the checksum.
         for idx in (N0..(N0 + N1)).rev() {
-            elements.push(self.sig[idx].to_byte_array().to_vec());
-            elements.push(self.msg.0[idx].to_le_bytes().to_vec());
+            push_element(idx, &mut elements, &self);
         }
         // Push the stack element limbs skipping some of them.
         for idx in (0..N0).rev().skip(skipping) {
-            elements.push(self.sig[idx].to_byte_array().to_vec());
-            elements.push(self.msg.0[idx].to_le_bytes().to_vec());
+            push_element(idx, &mut elements, &self);
         }
 
         elements

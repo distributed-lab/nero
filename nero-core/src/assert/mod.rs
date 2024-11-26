@@ -5,10 +5,10 @@ use bitcoin::{
     key::{constants::SCHNORR_SIGNATURE_SIZE, Secp256k1, Verification},
     relative::Height,
     sighash::{Prevouts, SighashCache},
-    taproot::{ControlBlock, LeafVersion, TaprootBuilder, TaprootSpendInfo},
+    taproot::{self, ControlBlock, LeafVersion, TaprootBuilder, TaprootSpendInfo},
     transaction::Version,
-    Amount, OutPoint, ScriptBuf, Sequence, TapLeafHash, TapSighashType, Transaction, TxIn, TxOut,
-    Txid, Weight, Witness, XOnlyPublicKey,
+    Amount, OutPoint, ScriptBuf, Sequence, TapLeafHash, TapSighashType, Transaction, TxIn,
+    TxOut, Txid, Weight, Witness, XOnlyPublicKey,
 };
 use musig2::{
     secp256k1::{schnorr::Signature, PublicKey, SecretKey, Signing},
@@ -16,8 +16,8 @@ use musig2::{
 };
 
 use crate::{
-    claim::FundedClaim,
-    disprove::DisproveScript,
+    claim::{scripts::AssertScript, FundedClaim},
+    disprove::{extract_signed_states, signing::SignedIntermediateState, DisproveScript},
     payout::PayoutScript,
     schnorr_sign_partial, UNSPENDABLE_KEY,
 };
@@ -58,7 +58,7 @@ impl Assert {
         C: Verification,
     {
         let scripts_with_weights =
-            iter::once((PAYOUT_SCRIPT_WEIGHT, self.payout_script.to_script_pubkey())).chain(
+            iter::once((PAYOUT_SCRIPT_WEIGHT, self.payout_script.to_script())).chain(
                 self.disprove_scripts
                     .iter()
                     .map(|script| (DISPROVE_SCRIPT_WEIGHT, script.to_script_pubkey())),
@@ -74,8 +74,6 @@ impl Assert {
     where
         C: Verification,
     {
-        let taproot = self.taproot(ctx);
-
         Transaction {
             version: Version::ONE,
             lock_time: LockTime::ZERO,
@@ -85,10 +83,7 @@ impl Assert {
                 sequence: Sequence::ZERO,
                 witness: Witness::new(),
             }],
-            output: vec![TxOut {
-                value: self.staked_amount,
-                script_pubkey: ScriptBuf::new_p2tr_tweaked(taproot.output_key()),
-            }],
+            output: vec![self.output(ctx)],
         }
     }
 
@@ -117,6 +112,14 @@ impl Assert {
         unsigned_tx.compute_txid()
     }
 
+    pub fn output<C: Verification>(&self, ctx: &Secp256k1<C>) -> TxOut {
+        let taproot = self.taproot(ctx);
+        TxOut {
+            value: self.staked_amount,
+            script_pubkey: ScriptBuf::new_p2tr_tweaked(taproot.output_key()),
+        }
+    }
+
     /// Create partial Schnorr signatures from claim transaction.
     pub fn sign_partial_from_claim<C: Verification + Signing>(
         &self,
@@ -128,13 +131,12 @@ impl Assert {
         secnonce: SecNonce,
     ) -> PartialSignature {
         let claim_assert_output = &claim.to_tx(ctx).output[0];
-        let claim_assert_leaf_hash =
-            TapLeafHash::from_script(&claim.assert_script(), LeafVersion::TapScript);
+        let claim_assert_script = claim.assert_script();
 
         self.sign_partial(
             ctx,
             claim_assert_output,
-            claim_assert_leaf_hash,
+            claim_assert_script,
             comittee_pubkeys,
             agg_nonce,
             secret_key,
@@ -145,17 +147,17 @@ impl Assert {
     // Let's reconsider the number of parameters later.
     #[allow(clippy::too_many_arguments)]
     /// Partially sign transaction using operator's key.
-    pub fn sign_partial<C: Verification + Signing>(
+    pub fn sign_partial<'a, C: Verification + Signing>(
         &self,
         ctx: &Secp256k1<C>,
         claim_assert_output: &TxOut,
-        claim_assert_leaf_hash: TapLeafHash,
+        claim_assert_script: AssertScript<'a, impl Iterator<Item = &'a SignedIntermediateState>>,
         comittee_pubkeys: Vec<PublicKey>,
         agg_nonce: &AggNonce,
         secret_key: SecretKey,
         secnonce: SecNonce,
     ) -> PartialSignature {
-        let sighash = self.sighash(ctx, claim_assert_output, claim_assert_leaf_hash);
+        let sighash = self.sighash(ctx, claim_assert_output, claim_assert_script);
 
         schnorr_sign_partial(
             ctx,
@@ -168,47 +170,52 @@ impl Assert {
     }
 
     /// Return sighash of assert transaction for signing.
-    pub(crate) fn sighash<C: Verification>(
+    pub(crate) fn sighash<'a, C: Verification>(
         &self,
         ctx: &Secp256k1<C>,
         claim_assert_output: &TxOut,
-        claim_assert_leaf_hash: TapLeafHash,
+        claim_assert_script: AssertScript<'a, impl Iterator<Item = &'a SignedIntermediateState>>,
     ) -> bitcoin::TapSighash {
+        let script = claim_assert_script.into_script();
+        let leaf_hash = TapLeafHash::from_script(&script, LeafVersion::TapScript);
         let unsigned_tx = self.to_unsigned_tx(ctx);
 
         SighashCache::new(&unsigned_tx)
             .taproot_script_spend_signature_hash(
                 0,
                 &Prevouts::All(&[claim_assert_output]),
-                claim_assert_leaf_hash,
+                leaf_hash,
                 TapSighashType::Default,
             )
             .unwrap()
     }
 
-    pub fn payout_script(&self) -> ScriptBuf {
-        self.payout_script.to_script_pubkey()
+    pub fn payout_script(&self) -> &PayoutScript {
+        &self.payout_script
     }
 }
 
 pub struct SignedAssert {
     inner: Assert,
-    signature: Signature,
+    signature: taproot::Signature,
     assert_script: ScriptBuf,
     assert_script_control_block: ControlBlock,
 }
 
 impl SignedAssert {
-    pub fn new(
+    pub fn new<'a>(
         inner: Assert,
         signature: impl Into<Signature>,
-        assert_script: ScriptBuf,
+        assert_script: AssertScript<'a, impl Iterator<Item = &'a SignedIntermediateState>>,
         assert_script_control_block: ControlBlock,
     ) -> Self {
         Self {
             inner,
-            signature: signature.into(),
-            assert_script,
+            signature: taproot::Signature {
+                signature: signature.into(),
+                sighash_type: TapSighashType::Default,
+            },
+            assert_script: assert_script.into_script(),
             assert_script_control_block,
         }
     }
@@ -219,16 +226,15 @@ impl SignedAssert {
 
         let witness = &mut unsigned_tx.input[0].witness;
 
-        /* Push witness stack */
-        // Don't forget that this is a signature without hash type, as it's
-        // default one.
-        witness.push(self.signature.serialize());
+        let signed_states = extract_signed_states(&self.inner.disprove_scripts);
 
-        for disprove in &self.inner.disprove_scripts {
-            for element in disprove.to_witness_stack_elements() {
+        /* Push witness stack */
+        for state in signed_states.rev() {
+            for element in state.witness_elements() {
                 witness.push(element);
             }
         }
+        witness.push(self.signature.serialize());
 
         /* Push script */
         witness.push(self.assert_script.clone());
@@ -253,7 +259,7 @@ impl SignedAssert {
         let taptree = self.inner.taproot(ctx);
 
         taptree
-            .control_block(&(script, LeafVersion::TapScript))
+            .control_block(&(script.to_script(), LeafVersion::TapScript))
             .expect("Payout script is included into taptree")
     }
 

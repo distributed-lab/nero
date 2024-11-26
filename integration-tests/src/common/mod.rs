@@ -211,7 +211,11 @@ pub(crate) fn sign_raw_transaction_with_wallet(
     tx: &Transaction,
 ) -> Result<Transaction, jsonrpc::Error> {
     let hextx = bitcoin::consensus::encode::serialize_hex(&tx);
-    let params = to_raw_value(&[hextx]).unwrap();
+
+    let params = vec![to_raw_value(&hextx).unwrap()];
+
+    let params = to_raw_value(&params).unwrap();
+    tracing::info!("{}", params);
     let value: serde_json::Value = client.call("signrawtransactionwithwallet", Some(&params))?;
 
     tracing::info!("{:?}", value);

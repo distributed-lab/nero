@@ -15,8 +15,15 @@ use musig2::{
 };
 
 use crate::{
-    assert::Assert, claim::FundedClaim, context::Context, schnorr_sign_partial,
-    scripts::OP_CHECKCOVENANT, treepp::*,
+    assert::Assert,
+    claim::{
+        scripts::OptimisticPayoutScript,
+        FundedClaim,
+    },
+    context::Context,
+    schnorr_sign_partial,
+    scripts::OP_CHECKCOVENANT,
+    treepp::*,
 };
 
 /// Assuming that mean block mining time is 10 minutes:
@@ -56,7 +63,7 @@ impl PayoutScript {
         }
     }
 
-    pub fn to_script_pubkey(&self) -> Script {
+    pub fn to_script(&self) -> Script {
         script! {
             { self.locktime.value() as u32 }
             OP_CSV
@@ -73,7 +80,7 @@ pub struct PayoutOptimistic {
     claim_txid: Txid,
 
     /// Operator's pubkey for output.
-    operator_pubkey: XOnlyPublicKey,
+    operator_script_pubkey: Script,
 
     /// Claim transaction challenge period.
     claim_challenge_period: Height,
@@ -89,17 +96,14 @@ impl PayoutOptimistic {
         C: Verification,
     {
         Self {
-            operator_pubkey: ctx.operator_pubkey.into(),
+            operator_script_pubkey: ctx.operator_script_pubkey.clone(),
             claim_challenge_period: ctx.claim_challenge_period,
             staked_amount: ctx.staked_amount,
             claim_txid,
         }
     }
 
-    pub fn to_unsigned_tx<C>(&self, ctx: &Secp256k1<C>) -> Transaction
-    where
-        C: Verification,
-    {
+    pub fn to_unsigned_tx(&self) -> Transaction {
         Transaction {
             version: Version::TWO,
             lock_time: LockTime::ZERO,
@@ -119,7 +123,7 @@ impl PayoutOptimistic {
             ],
             output: vec![TxOut {
                 value: self.staked_amount,
-                script_pubkey: Script::new_p2tr(ctx, self.operator_pubkey, None),
+                script_pubkey: self.operator_script_pubkey.clone(),
             }],
         }
     }
@@ -136,14 +140,13 @@ impl PayoutOptimistic {
         let tx = claim.to_tx(ctx);
         let claim_assert_output = &tx.output[0];
         let claim_challenge_output = &tx.output[1];
-        let claim_assert_leaf_hash =
-            TapLeafHash::from_script(&claim.optimistic_payout_script(), LeafVersion::TapScript);
+        let claim_assert_script = claim.optimistic_payout_script();
 
         self.sign_partial(
             ctx,
             claim_assert_output,
             claim_challenge_output,
-            claim_assert_leaf_hash,
+            &claim_assert_script,
             comittee_pubkeys,
             agg_nonce,
             secret_key,
@@ -157,17 +160,16 @@ impl PayoutOptimistic {
         ctx: &Secp256k1<C>,
         claim_assert_output: &TxOut,
         claim_challenge_output: &TxOut,
-        claim_assert_leaf_hash: TapLeafHash,
+        claim_assert_script: &OptimisticPayoutScript,
         comittee_pubkeys: Vec<PublicKey>,
         agg_nonce: &AggNonce,
         secret_key: SecretKey,
         secnonce: SecNonce,
     ) -> PartialSignature {
         let sighash = self.assert_sighash(
-            ctx,
             claim_assert_output,
             claim_challenge_output,
-            claim_assert_leaf_hash,
+            claim_assert_script,
         );
 
         schnorr_sign_partial(
@@ -181,20 +183,21 @@ impl PayoutOptimistic {
     }
 
     /// Return sighash for assert output of Claim transaction.
-    pub(crate) fn assert_sighash<C: Verification>(
+    pub(crate) fn assert_sighash(
         &self,
-        ctx: &Secp256k1<C>,
         claim_assert_txout: &TxOut,
         claim_challenge_txout: &TxOut,
-        claim_payout_leaf_hash: TapLeafHash,
+        claim_payout_script: &OptimisticPayoutScript,
     ) -> bitcoin::TapSighash {
-        let unsigned_tx = self.to_unsigned_tx(ctx);
+        let leaf_hash =
+            TapLeafHash::from_script(&claim_payout_script.to_script(), LeafVersion::TapScript);
+        let unsigned_tx = self.to_unsigned_tx();
         SighashCache::new(&unsigned_tx)
             .taproot_script_spend_signature_hash(
-                0,
+                /* Payout optimisitc assert input is the first one */ 0,
                 &Prevouts::All(&[claim_assert_txout, claim_challenge_txout]),
-                claim_payout_leaf_hash,
-                TapSighashType::Default,
+                leaf_hash,
+                TapSighashType::All,
             )
             .unwrap()
     }
@@ -205,23 +208,17 @@ impl PayoutOptimistic {
         claim_challenge_txout: &TxOut,
         ctx: &Secp256k1<C>,
         secret_key: SecretKey,
-    ) -> Signature {
-        let unsigned_tx = self.to_unsigned_tx(ctx);
+    ) -> schnorr::Signature {
+        let unsigned_tx = self.to_unsigned_tx();
         let sighash = SighashCache::new(&unsigned_tx)
             .taproot_key_spend_signature_hash(
                 /* Payout optimisitc challenge input is the second one */ 1,
-                &Prevouts::All(&[claim_challenge_txout, claim_assert_txout]),
-                TapSighashType::Default,
+                &Prevouts::All(&[claim_assert_txout, claim_challenge_txout]),
+                TapSighashType::All,
             )
             .unwrap();
 
-        let signature =
-            ctx.sign_schnorr(&sighash.into(), &Keypair::from_secret_key(ctx, &secret_key));
-
-        Signature {
-            signature,
-            sighash_type: TapSighashType::Default,
-        }
+        ctx.sign_schnorr(&sighash.into(), &Keypair::from_secret_key(ctx, &secret_key))
     }
 }
 
@@ -232,7 +229,7 @@ pub struct SignedPayoutOptimistic {
     /// Multisig created with comittee.
     covenants_sig: Signature,
 
-    /// Operator's signature for challenge output
+    /// Operator's spending witness created by wallet.
     operator_sig: Signature,
 
     /// Script by which transaction will be spent
@@ -246,8 +243,8 @@ impl SignedPayoutOptimistic {
     pub fn new(
         inner: PayoutOptimistic,
         covenants_sig: impl Into<schnorr::Signature>,
-        operator_sig: Signature,
-        script: Script,
+        operator_sig: impl Into<schnorr::Signature>,
+        script: &OptimisticPayoutScript,
         script_control_block: ControlBlock,
     ) -> Self {
         Self {
@@ -256,14 +253,17 @@ impl SignedPayoutOptimistic {
                 signature: covenants_sig.into(),
                 sighash_type: TapSighashType::Default,
             },
-            operator_sig,
-            script,
+            operator_sig: Signature {
+                signature: operator_sig.into(),
+                sighash_type: TapSighashType::Default,
+            },
+            script: script.to_script(),
             script_control_block,
         }
     }
 
-    pub fn to_tx<C: Verification>(&self, ctx: &Secp256k1<C>) -> Transaction {
-        let mut unsigned_tx = self.inner.to_unsigned_tx(ctx);
+    pub fn to_tx(&self) -> Transaction {
+        let mut unsigned_tx = self.inner.to_unsigned_tx();
 
         /* Fill assert output */
         let witness = &mut unsigned_tx.input[0].witness;
@@ -336,14 +336,12 @@ impl Payout {
         secret_key: SecretKey,
         secnonce: SecNonce,
     ) -> PartialSignature {
-        let assert_output = &assert.to_unsigned_tx(ctx).output[0];
-        let assert_payout_leaf_hash =
-            TapLeafHash::from_script(&assert.payout_script(), LeafVersion::TapScript);
+        let assert_output = assert.output(ctx);
 
         self.sign_partial(
             ctx,
-            assert_output,
-            assert_payout_leaf_hash,
+            &assert_output,
+            assert.payout_script(),
             comittee_pubkeys,
             agg_nonce,
             secret_key,
@@ -356,13 +354,13 @@ impl Payout {
         &self,
         ctx: &Secp256k1<C>,
         assert_output: &TxOut,
-        assert_payout_leaf_hash: TapLeafHash,
+        assert_payout: &PayoutScript,
         comittee_pubkeys: Vec<PublicKey>,
         agg_nonce: &AggNonce,
         secret_key: SecretKey,
         secnonce: SecNonce,
     ) -> PartialSignature {
-        let sighash = self.sighash(ctx, assert_output, assert_payout_leaf_hash);
+        let sighash = self.sighash(ctx, assert_output, assert_payout);
 
         schnorr_sign_partial(
             ctx,
@@ -378,18 +376,18 @@ impl Payout {
         &self,
         ctx: &Secp256k1<C>,
         assert_txout: &TxOut,
-        assert_payout_leaf_hash: TapLeafHash,
+        assert_payout: &PayoutScript,
         seckey: &SecretKey,
     ) -> Signature {
         let unsigned_tx = self.to_unsigned_tx(ctx);
-
+        let leaf_hash = TapLeafHash::from_script(&assert_payout.to_script(), LeafVersion::TapScript);
         let sighash_type = TapSighashType::SinglePlusAnyoneCanPay;
 
         let sighash = SighashCache::new(&unsigned_tx)
             .taproot_script_spend_signature_hash(
                 /* Payout is signed fully and should have only one input */ 0,
                 &Prevouts::All(&[assert_txout]),
-                assert_payout_leaf_hash,
+                leaf_hash,
                 sighash_type,
             )
             .unwrap();
@@ -406,15 +404,20 @@ impl Payout {
         &self,
         ctx: &Secp256k1<C>,
         assert_output: &TxOut,
-        assert_payout_leaf_hash: TapLeafHash,
+        assert_payout_script: &PayoutScript,
     ) -> bitcoin::TapSighash {
         let unsigned_tx = self.to_unsigned_tx(ctx);
+        let leaf_hash = TapLeafHash::from_script(
+            &assert_payout_script.to_script(),
+            LeafVersion::TapScript,
+        );
+
         SighashCache::new(&unsigned_tx)
             .taproot_script_spend_signature_hash(
                 /* assert output with taproot should be first */ 0,
                 &Prevouts::All(&[assert_output]),
-                assert_payout_leaf_hash,
-                TapSighashType::Default,
+                leaf_hash,
+                TapSighashType::All,
             )
             .unwrap()
     }
@@ -446,7 +449,7 @@ impl SignedPayout {
             payout_control_block,
             covenants_sig: Signature {
                 signature: covenants_sig.into(),
-                sighash_type: TapSighashType::Default,
+                sighash_type: TapSighashType::All,
             },
             operators_sig,
         }
@@ -461,7 +464,7 @@ impl SignedPayout {
         witness.push(self.covenants_sig.serialize());
         witness.push(self.operators_sig.serialize());
         /* script */
-        witness.push(self.payout_script.to_script_pubkey());
+        witness.push(self.payout_script.to_script());
         /* control block */
         witness.push(self.payout_control_block.serialize());
 

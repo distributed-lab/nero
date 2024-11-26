@@ -1,12 +1,6 @@
 use crate::disprove::{form_disprove_scripts_distorted, DisproveScript};
 
-use bitcoin::{
-    key::{Keypair, Secp256k1},
-    secp256k1::SecretKey,
-    sighash::{Prevouts, SighashCache},
-    taproot::{LeafVersion, Signature},
-    TapLeafHash, TapSighashType, Transaction, TxOut,
-};
+use bitcoin::{key::Secp256k1, taproot::LeafVersion, TapLeafHash};
 use bitcoin_splitter::split::{
     core::SplitType,
     intermediate_state::IntermediateState,
@@ -17,10 +11,9 @@ use bitcoin_testscripts::{
     int_mul_windowed::U254MulScript,
     square_fibonacci::SquareFibonacciScript,
 };
-use bitcoin_utils::stack_to_script;
-use bitcoin_utils::{comparison::OP_LONGEQUALVERIFY, treepp::*};
+use bitcoin_utils::{comittee_signature, comparison::OP_LONGEQUALVERIFY, treepp::*};
+use bitcoin_utils::{debug::execute_script_with_leaf, stack_to_script};
 use bitcoin_window_mul::{bigint::U508, traits::comparable::Comparable};
-use musig2::secp256k1::All;
 use rand::thread_rng;
 
 use crate::{disprove::form_disprove_scripts, disprove::signing::SignedIntermediateState};
@@ -169,7 +162,9 @@ pub fn test_trivial_disprove_script_success() {
     // Now, form the disprove script
     let disprove_script =
         DisproveScript::new(state_from, state_to, function, pubkey.x_only_public_key().0);
-    let signature = comittee_signature(&disprove_script, &secp_ctx, seckey);
+    let leaf_hash =
+        TapLeafHash::from_script(&disprove_script.to_script_pubkey(), LeafVersion::TapScript);
+    let signature = comittee_signature(&disprove_script.to_script_pubkey(), &secp_ctx, seckey);
 
     // Check that witness + verification scripts are satisfied
     let verify_script = script! {
@@ -177,40 +172,8 @@ pub fn test_trivial_disprove_script_success() {
         { disprove_script.to_script_pubkey() }
     };
 
-    let result = execute_script(verify_script);
-    assert!(result.success, "Verification failed");
-}
-
-fn comittee_signature(
-    disprove_script: &DisproveScript,
-    secp_ctx: &Secp256k1<All>,
-    seckey: SecretKey,
-) -> Signature {
-    let tx = Transaction {
-        version: bitcoin::transaction::Version::TWO,
-        lock_time: bitcoin::locktime::absolute::LockTime::ZERO,
-        input: vec![],
-        output: vec![],
-    };
-
-    let sighash = SighashCache::new(tx)
-        .taproot_script_spend_signature_hash(
-            0,
-            &Prevouts::<&TxOut>::All(&[]),
-            TapLeafHash::from_script(&disprove_script.to_script_pubkey(), LeafVersion::TapScript),
-            TapSighashType::Default,
-        )
-        .unwrap();
-
-    let signature = secp_ctx.sign_schnorr(
-        &sighash.into(),
-        &Keypair::from_secret_key(secp_ctx, &seckey),
-    );
-
-    Signature {
-        signature,
-        sighash_type: TapSighashType::Default,
-    }
+    let result = execute_script_with_leaf(verify_script, leaf_hash);
+    assert!(result.success, "Verification failed\n: {result}");
 }
 
 #[test]
@@ -240,7 +203,7 @@ pub fn test_trivial_disprove_script_should_fail() {
 
     // Now, form the disprove script
     let disprove_script = DisproveScript::new(state_from, state_to, function, pubkey);
-    let signature = comittee_signature(&disprove_script, &secp_ctx, seckey);
+    let signature = comittee_signature(&disprove_script.to_script_pubkey(), &secp_ctx, seckey);
 
     // Check that witness + verification scripts are satisfied
     let verify_script = script! {
@@ -280,7 +243,7 @@ pub fn test_disprove_script_with_altstack_should_fail() {
 
     // Now, form the disprove script
     let disprove_script = DisproveScript::new(state_from, state_to, function, pubkey);
-    let signature = comittee_signature(&disprove_script, &secp_ctx, seckey);
+    let signature = comittee_signature(&disprove_script.to_script_pubkey(), &secp_ctx, seckey);
 
     // Check that witness + verification scripts are satisfied
     let verify_script = script! {
@@ -320,7 +283,9 @@ pub fn test_disprove_script_with_altstack_success() {
 
     // Now, form the disprove script
     let disprove_script = DisproveScript::new(state_from, state_to, function, pubkey);
-    let signature = comittee_signature(&disprove_script, &secp_ctx, seckey);
+    let leaf_hash =
+        TapLeafHash::from_script(&disprove_script.to_script_pubkey(), LeafVersion::TapScript);
+    let signature = comittee_signature(&disprove_script.to_script_pubkey(), &secp_ctx, seckey);
 
     // Check that witness + verification scripts are satisfied
     let verify_script = script! {
@@ -328,9 +293,9 @@ pub fn test_disprove_script_with_altstack_success() {
         { disprove_script.to_script_pubkey() }
     };
 
-    let result = execute_script(verify_script);
+    let result = execute_script_with_leaf(verify_script, leaf_hash);
 
-    assert!(result.success, "Verification failed");
+    assert!(result.success, "Verification failed\n: {result}");
 }
 
 #[test]
@@ -360,7 +325,7 @@ pub fn test_disprove_script_with_altstack_2() {
 
     // Now, form the disprove script
     let disprove_script = DisproveScript::new(state_from, state_to, function, pubkey);
-    let signature = comittee_signature(&disprove_script, &secp_ctx, seckey);
+    let signature = comittee_signature(&disprove_script.to_script_pubkey(), &secp_ctx, seckey);
 
     // Check that witness + verification scripts are satisfied
     let verify_script = script! {
@@ -407,7 +372,7 @@ pub fn test_disprove_script_mul_script() {
         );
 
         // Now, form the disprove script
-        let signature = comittee_signature(&disprove_script, &secp_ctx, seckey);
+        let signature = comittee_signature(&disprove_script.to_script_pubkey(), &secp_ctx, seckey);
 
         // Check that witness + verification scripts are satisfied
         let verify_script = script! {
@@ -458,7 +423,9 @@ pub fn test_disprove_script_fibonacci_script_invalid_input() {
         );
 
         // Now, form the disprove script
-        let signature = comittee_signature(&disprove_script, &secp_ctx, seckey);
+        let signature = comittee_signature(&disprove_script.to_script_pubkey(), &secp_ctx, seckey);
+        let leaf_hash =
+            TapLeafHash::from_script(&disprove_script.to_script_pubkey(), LeafVersion::TapScript);
 
         // Check that witness + verification scripts are satisfied
         let verify_script = script! {
@@ -466,7 +433,7 @@ pub fn test_disprove_script_fibonacci_script_invalid_input() {
             { disprove_script.to_script_pubkey() }
         };
 
-        let result = execute_script(verify_script);
+        let result = execute_script_with_leaf(verify_script, leaf_hash);
         assert!(!result.success, "Verification {:?} failed", i + 1);
     }
 }
@@ -496,7 +463,7 @@ pub fn test_disprove_script_fibonacci_script_valid_input() {
         );
 
         // Now, form the disprove script
-        let signature = comittee_signature(&disprove_script, &secp_ctx, seckey);
+        let signature = comittee_signature(&disprove_script.to_script_pubkey(), &secp_ctx, seckey);
 
         // Check that witness + verification scripts are satisfied
         let verify_script = script! {
@@ -530,7 +497,9 @@ pub fn test_distorted_disprove_script_fibonacci_sequence() {
     // Now, we form the disprove script for each shard
     for (i, disprove_script) in disprove_scripts.into_iter().enumerate() {
         // Now, form the disprove script
-        let signature = comittee_signature(&disprove_script, &secp_ctx, seckey);
+        let signature = comittee_signature(&disprove_script.to_script_pubkey(), &secp_ctx, seckey);
+        let leaf_hash =
+            TapLeafHash::from_script(&disprove_script.to_script_pubkey(), LeafVersion::TapScript);
 
         // Check that witness + verification scripts are satisfied only for the distorted shard
         let verify_script = script! {
@@ -538,7 +507,7 @@ pub fn test_distorted_disprove_script_fibonacci_sequence() {
             { disprove_script.to_script_pubkey() }
         };
 
-        let result = execute_script(verify_script);
+        let result = execute_script_with_leaf(verify_script, leaf_hash);
 
         if i == distorted_id || i == distorted_id + 1 {
             assert!(result.success, "Verification {:?} failed", i + 1);
@@ -562,7 +531,7 @@ pub fn test_disprove_script_batch_correctness() {
     // Now, we form the disprove script for each shard
     for (i, disprove_script) in disprove_scripts.into_iter().enumerate() {
         // Now, form the disprove script
-        let signature = comittee_signature(&disprove_script, &secp_ctx, seckey);
+        let signature = comittee_signature(&disprove_script.to_script_pubkey(), &secp_ctx, seckey);
 
         // Check that witness + verification scripts are satisfied only for the distorted shard
         let verify_script = script! {

@@ -15,7 +15,8 @@ use musig2::{secp::Point, KeyAggContext};
 use crate::{
     assert::Assert,
     disprove::{
-        form_disprove_scripts_with_seed, signing::SignedIntermediateState, Disprove, DisproveScript,
+        form_disprove_scripts_distorted_with_seed, form_disprove_scripts_with_seed,
+        signing::SignedIntermediateState, Disprove, DisproveScript,
     },
     treepp::*,
 };
@@ -33,6 +34,9 @@ pub struct Context<S: SplitableScript, C: Verification> {
 
     /// Fresh secret key generated for current session.
     pub(crate) operator_pubkey: PublicKey,
+
+    /// Fresh secret key generated for current session.
+    pub(crate) operator_script_pubkey: Script,
 
     /// Public keys of comitte for emulating covenants.
     pub(crate) comittee: Vec<PublicKey>,
@@ -71,6 +75,7 @@ impl<S: SplitableScript, C: Verification> Context<S, C> {
         claim_challenge_period: Height,
         assert_challenge_period: Height,
         operator_pubkey: PublicKey,
+        operator_script_pubkey: Script,
         mut comittee: Vec<PublicKey>,
         seed: Seed,
     ) -> Self
@@ -127,6 +132,84 @@ impl<S: SplitableScript, C: Verification> Context<S, C> {
             input,
             secp: ctx,
             operator_pubkey,
+            operator_script_pubkey,
+            disprove_weights: disprove_txs.iter().map(|tx| tx.compute_weigth()).collect(),
+            disprove_scripts,
+            claim_challenge_period,
+            assert_challenge_period,
+            comittee,
+            assert_tx_weight,
+            __program: Default::default(),
+        }
+    }
+
+    /// Setup context for BitVM2 flow.
+    #[allow(clippy::too_many_arguments)]
+    pub fn compute_setup_distorted<Seed, Rng>(
+        ctx: Secp256k1<C>,
+        staked_amount: Amount,
+        input: Script,
+        claim_challenge_period: Height,
+        assert_challenge_period: Height,
+        operator_pubkey: PublicKey,
+        operator_script_pubkey: Script,
+        mut comittee: Vec<PublicKey>,
+        seed: Seed,
+    ) -> Self
+    where
+        Seed: Sized + Default + AsMut<[u8]> + Copy,
+        Rng: rand::SeedableRng<Seed = Seed> + rand::Rng,
+    {
+        // Always sort the order of keys in comittee before doing anything.
+        comittee.sort();
+        let key_ctx =
+            KeyAggContext::new(iter::once(operator_pubkey).chain(comittee.clone())).unwrap();
+        let comittee_aggpubkey = key_ctx.aggregated_pubkey();
+
+        let (disprove_scripts, _) = form_disprove_scripts_distorted_with_seed::<S, Seed, Rng>(
+            input.clone(),
+            comittee_aggpubkey,
+            seed,
+        );
+
+        let dummy_txid =
+            Txid::from_str("6ac23d25c784f97c75a0ebd5985d6db0c8c4b4c1f6d0bd684b5a2087b7abeb30")
+                .expect("const valid txid");
+
+        let assert_tx = Assert::new(
+            &disprove_scripts,
+            operator_pubkey.into(),
+            assert_challenge_period,
+            dummy_txid,
+            comittee_aggpubkey,
+            Amount::ZERO,
+        );
+        let taproot = assert_tx.taproot(&ctx);
+
+        let disprove_txs = disprove_scripts
+            .iter()
+            .map(|script| {
+                Disprove::new(
+                    script,
+                    dummy_txid,
+                    taproot
+                        // TODO(Velnbur): another place which generates a large chunk of memory
+                        // just for getting a control block. We should create a PR in rust-bitcoin to
+                        // avoid that.
+                        .control_block(&(script.to_script_pubkey(), LeafVersion::TapScript))
+                        .unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let assert_tx_weight = assert_tx.compute_weight(&ctx);
+
+        Self {
+            staked_amount,
+            input,
+            secp: ctx,
+            operator_pubkey,
+            operator_script_pubkey,
             disprove_weights: disprove_txs.iter().map(|tx| tx.compute_weigth()).collect(),
             disprove_scripts,
             claim_challenge_period,

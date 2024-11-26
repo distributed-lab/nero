@@ -54,10 +54,7 @@ pub(crate) fn schnorr_sign_partial<C: Verification + Signing>(
     pubkeys.sort();
     let keyagg_ctx = KeyAggContext::new(pubkeys).unwrap();
 
-    let partial_sig =
-        musig2::sign_partial(&keyagg_ctx, secret_key, secnonce, agg_nonce, sighash).unwrap();
-
-    partial_sig
+    musig2::sign_partial(&keyagg_ctx, secret_key, secnonce, agg_nonce, sighash).unwrap()
 }
 
 #[cfg(test)]
