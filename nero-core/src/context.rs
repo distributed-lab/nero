@@ -13,12 +13,10 @@ use bitcoin_splitter::split::script::SplitableScript;
 use musig2::{secp::Point, KeyAggContext};
 
 use crate::{
-    assert::Assert,
-    disprove::{
+    assert::Assert, disprove::{
         form_disprove_scripts_distorted_with_seed, form_disprove_scripts_with_seed,
         signing::SignedIntermediateState, Disprove, DisproveScript,
-    },
-    treepp::*,
+    }, payout::PAYOUT_APPROX_WEIGHT, treepp::*
 };
 
 /// Global context of BitVM2 flow.
@@ -53,13 +51,15 @@ pub struct Context<S: SplitableScript, C: Verification> {
     /// Transaction weights of disprove transaction in the same order.
     ///
     /// It's required for calculating the fee for disprove transaction.
-    pub(crate) disprove_weights: Vec<Weight>,
+    pub(crate) largest_disprove_weight: Weight,
 
     /// Assert transaction weight.
     ///
     /// It's required to calculate it before hand as with current fee rate we
     /// can predict the fee required for assert transaction.
     pub(crate) assert_tx_weight: Weight,
+
+    pub(crate) payout_tx_weight: Weight,
 
     /// Program that current flow asserts.
     __program: PhantomData<S>,
@@ -133,12 +133,13 @@ impl<S: SplitableScript, C: Verification> Context<S, C> {
             secp: ctx,
             operator_pubkey,
             operator_script_pubkey,
-            disprove_weights: disprove_txs.iter().map(|tx| tx.compute_weigth()).collect(),
+            largest_disprove_weight: disprove_txs.iter().map(|tx| tx.compute_weigth()).max().unwrap(),
             disprove_scripts,
             claim_challenge_period,
             assert_challenge_period,
             comittee,
             assert_tx_weight,
+            payout_tx_weight: PAYOUT_APPROX_WEIGHT,
             __program: Default::default(),
         }
     }
@@ -210,12 +211,13 @@ impl<S: SplitableScript, C: Verification> Context<S, C> {
             secp: ctx,
             operator_pubkey,
             operator_script_pubkey,
-            disprove_weights: disprove_txs.iter().map(|tx| tx.compute_weigth()).collect(),
+            largest_disprove_weight: disprove_txs.iter().map(|tx| tx.compute_weigth()).max().unwrap(),
             disprove_scripts,
             claim_challenge_period,
             assert_challenge_period,
             comittee,
             assert_tx_weight,
+            payout_tx_weight: PAYOUT_APPROX_WEIGHT,
             __program: Default::default(),
         }
     }

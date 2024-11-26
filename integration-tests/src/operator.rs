@@ -154,12 +154,12 @@ fn setup_operator<S: SplitableScript>(distort: bool) -> eyre::Result<TestSetup<S
         "Funded claim is signed"
     );
     let funding_inputs = signed_funded_tx.input;
-    let change_output = &signed_funded_tx.output[2];
+    let change_output = signed_funded_tx.output.get(2).cloned();
 
     let nonce_agg_operator = NoncesAggregationOperator::from_unfunded_operator(
         unfunded_operator,
         funding_inputs,
-        change_output.clone(),
+        change_output,
         FEE_RATE,
         &mut thread_rng(),
     );

@@ -7,9 +7,10 @@ use bitcoin::{
     sighash::{Prevouts, SighashCache},
     taproot::{self, ControlBlock, LeafVersion, TaprootBuilder, TaprootSpendInfo},
     transaction::Version,
-    Amount, OutPoint, ScriptBuf, Sequence, TapLeafHash, TapSighashType, Transaction, TxIn,
+    Amount, FeeRate, OutPoint, ScriptBuf, Sequence, TapLeafHash, TapSighashType, Transaction, TxIn,
     TxOut, Txid, Weight, Witness, XOnlyPublicKey,
 };
+use bitcoin_splitter::split::script::SplitableScript;
 use musig2::{
     secp256k1::{schnorr::Signature, PublicKey, SecretKey, Signing},
     AggNonce, PartialSignature, SecNonce,
@@ -17,6 +18,7 @@ use musig2::{
 
 use crate::{
     claim::{scripts::AssertScript, FundedClaim},
+    context::Context,
     disprove::{extract_signed_states, signing::SignedIntermediateState, DisproveScript},
     payout::PayoutScript,
     schnorr_sign_partial, UNSPENDABLE_KEY,
@@ -33,6 +35,26 @@ pub struct Assert {
 }
 
 impl Assert {
+    pub fn from_context<S: SplitableScript, C: Verification>(
+        ctx: &Context<S, C>,
+        claim_txid: Txid,
+        fee_rate: FeeRate,
+    ) -> Self {
+        Self {
+            claim_txid,
+            disprove_scripts: ctx.disprove_scripts.clone(),
+            payout_script: PayoutScript::with_locktime(
+                ctx.operator_pubkey.into(),
+                ctx.comittee_aggpubkey(),
+                ctx.assert_challenge_period,
+            ),
+            staked_amount: ctx.staked_amount
+                + fee_rate
+                    .checked_mul_by_weight(ctx.largest_disprove_weight)
+                    .unwrap(),
+        }
+    }
+
     pub fn new(
         disprove_scripts: &[DisproveScript],
         operator_pubkey: XOnlyPublicKey,

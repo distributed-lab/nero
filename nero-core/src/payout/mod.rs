@@ -1,5 +1,12 @@
 use bitcoin::{
-    absolute::LockTime, key::{Keypair, Parity, Secp256k1, Verification}, relative::Height, sighash::{Prevouts, SighashCache}, taproot::{ControlBlock, LeafVersion, Signature}, transaction::Version, Amount, OutPoint, Sequence, TapLeafHash, TapSighashType, TapTweakHash, Transaction, TxIn, TxOut, Txid, Witness, XOnlyPublicKey
+    absolute::LockTime,
+    key::{Keypair, Parity, Secp256k1, Verification},
+    relative::Height,
+    sighash::{Prevouts, SighashCache},
+    taproot::{ControlBlock, LeafVersion, Signature},
+    transaction::Version,
+    Amount, FeeRate, OutPoint, Sequence, TapLeafHash, TapSighashType, TapTweakHash, Transaction,
+    TxIn, TxOut, Txid, Weight, Witness, XOnlyPublicKey,
 };
 use bitcoin_splitter::split::script::SplitableScript;
 use musig2::{
@@ -9,10 +16,7 @@ use musig2::{
 
 use crate::{
     assert::Assert,
-    claim::{
-        scripts::OptimisticPayoutScript,
-        FundedClaim,
-    },
+    claim::{scripts::OptimisticPayoutScript, FundedClaim},
     context::Context,
     schnorr_sign_partial,
     scripts::OP_CHECKCOVENANT,
@@ -21,6 +25,9 @@ use crate::{
 
 /// Assuming that mean block mining time is 10 minutes:
 pub const LOCKTIME: u16 =  6 /* hour */ * 24 /* day */ * 14 /* two weeks */;
+
+pub const PAYOUT_APPROX_WEIGHT: Weight = Weight::from_vb_unchecked(2000);
+pub const PAYOUT_OPTIMISITC_APPROX_WEIGHT: Weight = Weight::from_vb_unchecked(780);
 
 /// Script by which Operator spends the Assert transaction after timelock.
 #[derive(Debug, Clone)]
@@ -83,7 +90,7 @@ pub struct PayoutOptimistic {
 }
 
 impl PayoutOptimistic {
-    pub fn from_context<S, C>(ctx: &Context<S, C>, claim_txid: Txid) -> Self
+    pub fn from_context<S, C>(ctx: &Context<S, C>, claim_txid: Txid, fee_rate: FeeRate) -> Self
     where
         S: SplitableScript,
         C: Verification,
@@ -91,7 +98,13 @@ impl PayoutOptimistic {
         Self {
             operator_script_pubkey: ctx.operator_script_pubkey.clone(),
             claim_challenge_period: ctx.claim_challenge_period,
-            staked_amount: ctx.staked_amount,
+            staked_amount: ctx.staked_amount
+                + fee_rate
+                    .checked_mul_by_weight(
+                        ctx.assert_tx_weight + ctx.largest_disprove_weight
+                            - PAYOUT_OPTIMISITC_APPROX_WEIGHT,
+                    )
+                    .unwrap(),
             claim_txid,
         }
     }
@@ -294,7 +307,21 @@ pub struct Payout {
 }
 
 impl Payout {
-    pub fn from_context<S, C>(ctx: &Context<S, C>, assert_txid: Txid) -> Self
+    pub fn new(
+        assert_txid: Txid,
+        operator_pubkey: XOnlyPublicKey,
+        assert_challenge_period: Height,
+        staked_amount: Amount,
+    ) -> Self {
+        Self {
+            assert_txid,
+            operator_pubkey,
+            assert_challenge_period,
+            staked_amount,
+        }
+    }
+
+    pub fn from_context<S, C>(ctx: &Context<S, C>, assert_txid: Txid, fee_rate: FeeRate) -> Self
     where
         S: SplitableScript,
         C: Verification,
@@ -302,7 +329,16 @@ impl Payout {
         Self {
             operator_pubkey: ctx.operator_pubkey.into(),
             assert_challenge_period: ctx.assert_challenge_period,
-            staked_amount: ctx.staked_amount,
+            // we spend in assert transaction part of the amount, so
+            // only left with "stacked_amount" and amount which was
+            // supposed to be spent by one of the disproves.
+            staked_amount: ctx.staked_amount
+                + fee_rate
+                    .checked_mul_by_weight(ctx.largest_disprove_weight)
+                    .unwrap()
+                - fee_rate
+                    .checked_mul_by_weight(ctx.payout_tx_weight)
+                    .unwrap(),
             assert_txid,
         }
     }
@@ -380,7 +416,8 @@ impl Payout {
         seckey: &SecretKey,
     ) -> Signature {
         let unsigned_tx = self.to_unsigned_tx(ctx);
-        let leaf_hash = TapLeafHash::from_script(&assert_payout.to_script(), LeafVersion::TapScript);
+        let leaf_hash =
+            TapLeafHash::from_script(&assert_payout.to_script(), LeafVersion::TapScript);
         let sighash_type = TapSighashType::SinglePlusAnyoneCanPay;
 
         let sighash = SighashCache::new(&unsigned_tx)
@@ -407,10 +444,8 @@ impl Payout {
         assert_payout_script: &PayoutScript,
     ) -> bitcoin::TapSighash {
         let unsigned_tx = self.to_unsigned_tx(ctx);
-        let leaf_hash = TapLeafHash::from_script(
-            &assert_payout_script.to_script(),
-            LeafVersion::TapScript,
-        );
+        let leaf_hash =
+            TapLeafHash::from_script(&assert_payout_script.to_script(), LeafVersion::TapScript);
 
         SighashCache::new(&unsigned_tx)
             .taproot_script_spend_signature_hash(

@@ -170,7 +170,7 @@ impl<S: SplitableScript> NoncesAggregationOperator<S> {
     pub fn from_unfunded_operator<Rng>(
         operator: UnfundedOperator<S>,
         funding_input: Vec<TxIn>,
-        change_output: TxOut,
+        change_output: Option<TxOut>,
         fee_rate: FeeRate,
         rng: &mut Rng,
     ) -> Self
@@ -190,20 +190,11 @@ impl<S: SplitableScript> NoncesAggregationOperator<S> {
 
         let assert_tx_weight = context.assert_tx_weight;
 
-        // Find the disprove transaction with largest weight,
-        // so we can calculate how much fee will be payed for it
-        // in worst case.
-        let largest_disprove_weight = context
-            .disprove_weights
-            .iter()
-            .max()
-            .expect("At least one disprove script must be");
-
         let challenge_tx = Challenge::new(
             context.operator_script_pubkey.clone(),
             claim_txid,
             fee_rate
-                .checked_mul_by_weight(*largest_disprove_weight + assert_tx_weight)
+                .checked_mul_by_weight(context.largest_disprove_weight + assert_tx_weight)
                 .unwrap(),
         );
 
@@ -274,7 +265,7 @@ where
         let aggnonce = AggNonce::sum(nonces);
 
         // Create and sign Optimistic Payout
-        let payout_optimistic_tx = PayoutOptimistic::from_context(context, claim_txid);
+        let payout_optimistic_tx = PayoutOptimistic::from_context(context, claim_txid, fee_rate);
         let partial_payout_optimistic_sig = payout_optimistic_tx.sign_partial_from_claim(
             &context.secp,
             &operator.claim,
@@ -284,19 +275,7 @@ where
             operator.operator_secnonce.clone(),
         );
 
-        // Sign and create Assert tx.
-        let assert_tx_amount = context.staked_amount
-            + fee_rate
-                .checked_mul_by_weight(*context.disprove_weights.iter().max().unwrap())
-                .unwrap();
-        let assert_tx = Assert::new(
-            &context.disprove_scripts,
-            context.operator_pubkey.into(),
-            context.assert_challenge_period,
-            claim_txid,
-            context.comittee_aggpubkey(),
-            assert_tx_amount,
-        );
+        let assert_tx = Assert::from_context(context, claim_txid, fee_rate);
         let partial_assert_sig = assert_tx.sign_partial_from_claim(
             &context.secp,
             &operator.claim,
@@ -308,7 +287,7 @@ where
         let assert_txid = assert_tx.compute_txid(&context.secp);
 
         // Create and sign payout transaction.
-        let payout_tx = Payout::from_context(context, assert_txid);
+        let payout_tx = Payout::from_context(context, assert_txid, fee_rate);
         let partial_payout_sig = payout_tx.sign_partial_from_assert(
             &context.secp,
             &assert_tx,

@@ -46,7 +46,7 @@ impl Claim {
             amount: ctx.staked_amount
                 + fee_rate
                     .checked_mul_by_weight(
-                        ctx.assert_tx_weight + *ctx.disprove_weights.iter().max().unwrap(),
+                        ctx.assert_tx_weight + ctx.largest_disprove_weight,
                     )
                     .unwrap(),
             operator_pubkey: ctx.operator_pubkey.into(),
@@ -122,7 +122,7 @@ pub struct FundedClaim {
     /// Funding input got from external wallet.
     funding_inputs: Vec<TxIn>,
     /// The change output created after funding the claim tx.
-    change_output: TxOut,
+    change_output: Option<TxOut>,
 }
 
 impl FundedClaim {
@@ -130,7 +130,7 @@ impl FundedClaim {
     pub fn new(
         claim: Claim,
         funding_inputs: Vec<TxIn>,
-        change_output: TxOut,
+        change_output: Option<TxOut>,
         program_input: Script,
     ) -> Self {
         Self {
@@ -170,7 +170,9 @@ impl FundedClaim {
         // }
 
         unsigned_tx.input.clone_from(&self.funding_inputs);
-        unsigned_tx.output.push(self.change_output.clone());
+        if let Some(output) = &self.change_output {
+            unsigned_tx.output.push(output.clone());
+        }
 
         unsigned_tx
     }
