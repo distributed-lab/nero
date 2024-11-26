@@ -31,6 +31,8 @@ pub mod signing;
 #[cfg(test)]
 mod tests;
 
+const SIGHASHTYPE: TapSighashType = TapSighashType::Single;
+
 pub struct Disprove {
     /// Disprove script.
     ///
@@ -104,7 +106,7 @@ impl Disprove {
                 /* assert output spending input is the first one */ 0,
                 &Prevouts::All(&[assert_txout]),
                 TapLeafHash::from_script(&self.script.to_script_pubkey(), LeafVersion::TapScript),
-                TapSighashType::All,
+                SIGHASHTYPE,
             )
             .unwrap()
     }
@@ -150,7 +152,7 @@ impl SignedDisprove {
             inner,
             covenants_sig: Signature {
                 signature: covenants_sig.into(),
-                sighash_type: TapSighashType::All,
+                sighash_type: SIGHASHTYPE,
             },
         }
     }

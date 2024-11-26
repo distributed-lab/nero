@@ -24,7 +24,7 @@ impl OptimisticPayoutScript {
 
     pub fn to_script(self) -> Script {
         script! {
-            { self.claim_challenge_period.value().to_le_bytes().to_vec() }
+            { self.claim_challenge_period.value() as i32 }
             OP_CSV
             OP_DROP
             { OP_CHECKCOVENANT(self.comittee_agg_pubkey) }

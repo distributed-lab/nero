@@ -18,6 +18,8 @@ use self::scripts::{AssertScript, OptimisticPayoutScript};
 
 pub(crate) mod scripts;
 
+const DUST_AMOUNT: Amount = Amount::from_sat(1_000);
+
 pub struct Claim {
     /// Amount stacked for claim
     amount: Amount,
@@ -29,7 +31,7 @@ pub struct Claim {
     claim_challenge_period: Height,
 
     /// Output of the operator's wallet for spending
-    operator_script_pubkey: Script,
+    operator_pubkey: XOnlyPublicKey,
 
     /// All signed states
     signed_states: Vec<SignedIntermediateState>,
@@ -47,17 +49,17 @@ impl Claim {
                         ctx.assert_tx_weight + *ctx.disprove_weights.iter().max().unwrap(),
                     )
                     .unwrap(),
-            operator_script_pubkey: ctx.operator_script_pubkey.clone(),
+            operator_pubkey: ctx.operator_pubkey.into(),
             comittee_aggpubkey: ctx.comittee_aggpubkey(),
             claim_challenge_period: ctx.claim_challenge_period,
             signed_states: ctx.signed_states(),
         }
     }
 
-    pub fn challenge_output(&self) -> TxOut {
+    pub fn challenge_output<C: Verification>(&self, ctx: &Secp256k1<C>) -> TxOut {
         TxOut {
-            value: Amount::from_sat(1000),
-            script_pubkey: self.operator_script_pubkey.clone(),
+            value: DUST_AMOUNT,
+            script_pubkey: Script::new_p2tr(ctx, self.operator_pubkey, None),
         }
     }
 
@@ -74,13 +76,13 @@ impl Claim {
     }
 
     fn taptree<C: Verification>(&self, ctx: &Secp256k1<C>) -> TaprootSpendInfo {
-        TaprootBuilder::new()
-            .add_leaf(1, self.optimistic_payout_script().to_script())
-            .expect("Depth is right")
-            .add_leaf(1, self.assert_script().into_script())
-            .expect("Depth is right")
-            .finalize(ctx, *UNSPENDABLE_KEY)
-            .unwrap()
+        TaprootBuilder::with_huffman_tree([
+            (9, self.optimistic_payout_script().to_script()),
+            (1, self.assert_script().into_script()),
+        ])
+        .unwrap()
+        .finalize(ctx, *UNSPENDABLE_KEY)
+        .unwrap()
     }
 
     pub fn optimistic_payout_script(&self) -> OptimisticPayoutScript {
@@ -97,7 +99,7 @@ impl Claim {
     where
         C: Verification,
     {
-        let challenge_output = self.challenge_output();
+        let challenge_output = self.challenge_output(ctx);
         let assert_output = self.assert_output(ctx);
 
         Transaction {
@@ -210,7 +212,7 @@ impl FundedClaim {
 
         taptree
             .control_block(&(
-                self.optimistic_payout_script().to_script(),
+                self.optimistic_payout_script().to_script(), 
                 LeafVersion::TapScript,
             ))
             .expect("taptree was constructed including assert script!")
@@ -223,7 +225,7 @@ impl FundedClaim {
         self.claim.assert_output(ctx)
     }
 
-    pub(crate) fn challenge_output(&self) -> TxOut {
-        self.claim.challenge_output()
+    pub(crate) fn challenge_output<C: Verification>(&self, ctx: &Secp256k1<C>) -> TxOut {
+        self.claim.challenge_output(ctx)
     }
 }

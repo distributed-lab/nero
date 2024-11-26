@@ -2,10 +2,16 @@
 
 use bitcoin::{
     absolute::LockTime,
+    key::{Keypair, Parity, Secp256k1},
+    sighash::{Prevouts, SighashCache},
+    taproot::Signature,
     transaction::Version,
-    Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid,
-    Witness,
+    Amount, OutPoint, ScriptBuf, Sequence, TapSighashType, TapTweakHash, Transaction, TxIn, TxOut,
+    Txid, Witness,
 };
+use musig2::secp256k1::{schnorr, SecretKey, Signing};
+
+const SIGHASHTYPE: TapSighashType = TapSighashType::SinglePlusAnyoneCanPay;
 
 pub struct Challenge {
     /// ID of Claim transaction.
@@ -46,21 +52,55 @@ impl Challenge {
             }],
         }
     }
+
+    pub fn sign<C: Signing>(
+        self,
+        ctx: &Secp256k1<C>,
+        claim_challenge_txout: &TxOut,
+        mut operator_seckey: SecretKey,
+    ) -> SignedChallenge {
+        let unsigned_tx = self.to_unsigned_tx();
+        const INPUT_INDEX: usize = /* challenge has only one input */ 0;
+        let sighash = SighashCache::new(unsigned_tx)
+            .taproot_key_spend_signature_hash(
+                INPUT_INDEX,
+                &Prevouts::All(&[claim_challenge_txout]),
+                SIGHASHTYPE,
+            )
+            .unwrap();
+
+        let (xonly, parity) = operator_seckey.public_key(ctx).x_only_public_key();
+        if parity == Parity::Odd {
+            operator_seckey = operator_seckey.negate();
+        }
+        let tweak = TapTweakHash::from_key_and_tweak(xonly, None);
+        operator_seckey = operator_seckey.add_tweak(&tweak.to_scalar()).unwrap();
+
+        let sig = ctx.sign_schnorr(
+            &sighash.into(),
+            &Keypair::from_secret_key(ctx, &operator_seckey),
+        );
+
+        SignedChallenge::new(self, sig)
+    }
 }
 
 pub struct SignedChallenge {
     /// Unsigned challenge transaciton.
     inner: Challenge,
 
-    /// Wintess for Single + AnyoneCanPay input.
-    input_witness: Witness,
+    /// Operator's signature for Single + AnyoneCanPay
+    operators_sig: Signature,
 }
 
 impl SignedChallenge {
-    pub(crate) fn new(inner: Challenge, witness: Witness) -> Self {
+    pub(crate) fn new(inner: Challenge, sig: impl Into<schnorr::Signature>) -> Self {
         Self {
             inner,
-            input_witness: witness,
+            operators_sig: Signature {
+                signature: sig.into(),
+                sighash_type: SIGHASHTYPE,
+            },
         }
     }
 
@@ -68,7 +108,8 @@ impl SignedChallenge {
         let mut unsigned_tx = self.inner.to_unsigned_tx();
 
         // add signature to tx, converting it to signed one.
-        unsigned_tx.input[0].witness = self.input_witness.clone();
+        let witness = &mut unsigned_tx.input[0].witness;
+        witness.push(self.operators_sig.serialize());
 
         unsigned_tx
     }

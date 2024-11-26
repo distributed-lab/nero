@@ -1,12 +1,5 @@
 use bitcoin::{
-    absolute::LockTime,
-    key::{Keypair, Secp256k1, Verification},
-    relative::Height,
-    sighash::{Prevouts, SighashCache},
-    taproot::{ControlBlock, LeafVersion, Signature},
-    transaction::Version,
-    Amount, OutPoint, Sequence, TapLeafHash, TapSighashType, Transaction, TxIn, TxOut, Txid,
-    Witness, XOnlyPublicKey,
+    absolute::LockTime, key::{Keypair, Parity, Secp256k1, Verification}, relative::Height, sighash::{Prevouts, SighashCache}, taproot::{ControlBlock, LeafVersion, Signature}, transaction::Version, Amount, OutPoint, Sequence, TapLeafHash, TapSighashType, TapTweakHash, Transaction, TxIn, TxOut, Txid, Witness, XOnlyPublicKey
 };
 use bitcoin_splitter::split::script::SplitableScript;
 use musig2::{
@@ -207,7 +200,7 @@ impl PayoutOptimistic {
         claim_assert_txout: &TxOut,
         claim_challenge_txout: &TxOut,
         ctx: &Secp256k1<C>,
-        secret_key: SecretKey,
+        mut secret_key: SecretKey,
     ) -> schnorr::Signature {
         let unsigned_tx = self.to_unsigned_tx();
         let sighash = SighashCache::new(&unsigned_tx)
@@ -217,6 +210,13 @@ impl PayoutOptimistic {
                 TapSighashType::All,
             )
             .unwrap();
+
+        let (xonly, parity) = secret_key.public_key(ctx).x_only_public_key();
+        if parity == Parity::Odd {
+            secret_key = secret_key.negate();
+        }
+        let tweak = TapTweakHash::from_key_and_tweak(xonly, None);
+        secret_key = secret_key.add_tweak(&tweak.to_scalar()).unwrap();
 
         ctx.sign_schnorr(&sighash.into(), &Keypair::from_secret_key(ctx, &secret_key))
     }
@@ -251,11 +251,11 @@ impl SignedPayoutOptimistic {
             inner,
             covenants_sig: Signature {
                 signature: covenants_sig.into(),
-                sighash_type: TapSighashType::Default,
+                sighash_type: TapSighashType::All,
             },
             operator_sig: Signature {
                 signature: operator_sig.into(),
-                sighash_type: TapSighashType::Default,
+                sighash_type: TapSighashType::All,
             },
             script: script.to_script(),
             script_control_block,

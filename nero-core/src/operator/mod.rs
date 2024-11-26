@@ -1,6 +1,6 @@
 use bitcoin::{
     key::Secp256k1, relative::Height, secp256k1::PublicKey, taproot::LeafVersion, Amount, FeeRate,
-    Network, Transaction, TxIn, TxOut, Witness,
+    Network, Transaction, TxIn, TxOut,
 };
 use bitcoin_splitter::split::script::SplitableScript;
 use musig2::{
@@ -117,6 +117,10 @@ where
     pub fn context(&self) -> &Context<S, All> {
         &self.context
     }
+
+    pub fn secret_key(&self) -> SecretKey {
+        self.secret_key
+    }
 }
 
 /* STAGE 1: */
@@ -149,25 +153,33 @@ impl<S: SplitableScript> UnfundedOperator<S> {
     }
 }
 
-/* STAGE 2: */
+/* STAGE 3: */
 
-/// After claim transaction is funded, operator waits for wallet to sign
-/// challenge transaction.
-pub struct ChallengeSigningOperator<S: SplitableScript> {
+/// After challenge transaction is signed by wallet, operator and comitte
+/// can exchange nonces for partial schnorr signatures.
+pub struct NoncesAggregationOperator<S: SplitableScript> {
     inner: Operator<S>,
     // Funded, signed by wallet claim transcation.
     claim: FundedClaim,
-    challenge: Challenge,
+    challenge_tx: SignedChallenge,
+    /// Secnonce generated from musig2 signature.
+    operator_secnonce: SecNonce,
 }
 
-impl<S: SplitableScript> ChallengeSigningOperator<S> {
-    pub fn from_challenge_singing_operator(
+impl<S: SplitableScript> NoncesAggregationOperator<S> {
+    pub fn from_unfunded_operator<Rng>(
         operator: UnfundedOperator<S>,
         funding_input: Vec<TxIn>,
         change_output: TxOut,
         fee_rate: FeeRate,
-    ) -> Self {
+        rng: &mut Rng,
+    ) -> Self
+    where
+        Rng: rand::RngCore + rand::CryptoRng,
+    {
         let context = &operator.inner.context;
+        let agg_pubkey = context.comittee_aggpubkey::<Point>();
+
         let funded_claim = FundedClaim::new(
             operator.claim,
             funding_input,
@@ -195,52 +207,19 @@ impl<S: SplitableScript> ChallengeSigningOperator<S> {
                 .unwrap(),
         );
 
-        Self {
-            challenge: challenge_tx,
-            inner: operator.inner,
-            claim: funded_claim,
-        }
-    }
-
-    pub fn unsigned_challenge_tx(&self) -> Transaction {
-        self.challenge.to_unsigned_tx()
-    }
-}
-
-/* STAGE 3: */
-
-/// After challenge transaction is signed by wallet, operator and comitte
-/// can exchange nonces for partial schnorr signatures.
-pub struct NoncesAggregationOperator<S: SplitableScript> {
-    inner: Operator<S>,
-    // Funded, signed by wallet claim transcation.
-    claim: FundedClaim,
-    challenge_tx: SignedChallenge,
-    /// Secnonce generated from musig2 signature.
-    operator_secnonce: SecNonce,
-}
-
-impl<S: SplitableScript> NoncesAggregationOperator<S> {
-    pub fn from_challenge_singing_operator<Rng>(
-        operator: ChallengeSigningOperator<S>,
-        challenge_tx_witness: Witness,
-        rng: &mut Rng,
-    ) -> Self
-    where
-        Rng: rand::RngCore + rand::CryptoRng,
-    {
-        let context = &operator.inner.context;
-        let agg_pubkey = context.comittee_aggpubkey::<Point>();
-
         let secnonce = SecNonceBuilder::new(rng)
             .with_seckey(operator.inner.secret_key)
             .with_aggregated_pubkey(agg_pubkey)
             .build();
 
         Self {
-            challenge_tx: SignedChallenge::new(operator.challenge, challenge_tx_witness),
+            challenge_tx: challenge_tx.sign(
+                &context.secp,
+                &funded_claim.challenge_output(&context.secp),
+                operator.inner.secret_key,
+            ),
             inner: operator.inner,
-            claim: operator.claim,
+            claim: funded_claim,
             operator_secnonce: secnonce,
         }
     }
@@ -432,7 +411,6 @@ where
 /// construct final "signed" versions of transaction and publish the claim
 /// one.
 pub struct FinalOperator<S: SplitableScript> {
-    #[allow(dead_code)]
     inner: Operator<S>,
 
     claim_tx: FundedClaim,
@@ -570,7 +548,7 @@ impl<S: SplitableScript> FinalOperator<S> {
 
         let payout_optimistic_assert_output_sighash = operator.payout_optimistic_tx.assert_sighash(
             &operator.claim_tx.assert_output(&context.secp),
-            &operator.claim_tx.challenge_output(),
+            &operator.claim_tx.challenge_output(&context.secp),
             &claim_payout_script,
         );
         let payout_optimistic_aggsig: CompactSignature = aggregate_partial_signatures(
@@ -583,7 +561,7 @@ impl<S: SplitableScript> FinalOperator<S> {
 
         let payout_optimistic_operator_sig = operator.payout_optimistic_tx.sign_challenge_input(
             &operator.claim_tx.assert_output(&context.secp),
-            &operator.claim_tx.challenge_output(),
+            &operator.claim_tx.challenge_output(&context.secp),
             &context.secp,
             operator.inner.secret_key,
         );
@@ -628,5 +606,9 @@ impl<S: SplitableScript> FinalOperator<S> {
 
     pub fn payout_tx(&self) -> &SignedPayout {
         &self.payout_tx
+    }
+
+    pub fn inner(&self) -> &Operator<S> {
+        &self.inner
     }
 }

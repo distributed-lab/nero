@@ -12,8 +12,8 @@ use jsonrpc::Client;
 use nero_core::{
     musig2::{NonceSeed, SecNonce},
     operator::{
-        ChallengeSigningOperator, FinalOperator, NoncesAggregationOperator, Operator,
-        OperatorConfig, PartialSignatures, SignaturesAggOperator, UnfundedOperator,
+        FinalOperator, NoncesAggregationOperator, Operator, OperatorConfig, PartialSignatures,
+        SignaturesAggOperator, UnfundedOperator,
     },
 };
 use once_cell::sync::Lazy;
@@ -156,24 +156,11 @@ fn setup_operator<S: SplitableScript>(distort: bool) -> eyre::Result<TestSetup<S
     let funding_inputs = signed_funded_tx.input;
     let change_output = &signed_funded_tx.output[2];
 
-    let challenge_signing_operator = ChallengeSigningOperator::from_challenge_singing_operator(
+    let nonce_agg_operator = NoncesAggregationOperator::from_unfunded_operator(
         unfunded_operator,
         funding_inputs,
         change_output.clone(),
         FEE_RATE,
-    );
-
-    let challenge_tx = challenge_signing_operator.unsigned_challenge_tx();
-    let signed_challenge_tx = sign_raw_transaction_with_wallet(&client, &challenge_tx)?;
-    tracing::info!(
-        tx = bitcoin::consensus::encode::serialize_hex(&signed_challenge_tx),
-        "Signed challenge transaction"
-    );
-    let challenge_tx_witness = signed_challenge_tx.input[0].witness.clone();
-
-    let nonce_agg_operator = NoncesAggregationOperator::from_challenge_singing_operator(
-        challenge_signing_operator,
-        challenge_tx_witness,
         &mut thread_rng(),
     );
 
@@ -211,7 +198,11 @@ fn test_operator_optimistic_payout<S: SplitableScript>() -> eyre::Result<()> {
         "Sending claim"
     );
     send_raw_transaciton(&client, &tx)?;
-    generate_to_address(&client, CLAIM_CHALLENGE_PERIOD.into(), wallet_addr.clone())?;
+    generate_to_address(
+        &client,
+        (CLAIM_CHALLENGE_PERIOD + 1).into(),
+        wallet_addr.clone(),
+    )?;
 
     let payout_optimistic_tx = operator.payout_optimistic_tx();
     let tx = payout_optimistic_tx.to_tx();
@@ -226,6 +217,50 @@ fn test_operator_optimistic_payout<S: SplitableScript>() -> eyre::Result<()> {
     Ok(())
 }
 
+fn setup_assert_scenario<S: SplitableScript>(
+    operator: &FinalOperator<S>,
+    ctx: &Secp256k1<bitcoin::secp256k1::All>,
+    client: &Client,
+    wallet_addr: &Address,
+) -> eyre::Result<()> {
+    let claim_tx = operator.claim_tx();
+    let tx = claim_tx.to_tx(ctx);
+    tracing::info!(
+        tx = bitcoin::consensus::encode::serialize_hex(&tx),
+        "Sending claim"
+    );
+    send_raw_transaciton(client, &tx)?;
+    generate_to_address(client, 1, wallet_addr.clone())?;
+    let challenge_tx = operator.challenge_tx();
+    let tx = challenge_tx.to_tx();
+    tracing::info!(
+        tx = bitcoin::consensus::encode::serialize_hex(&tx),
+        "Got challenge tx"
+    );
+    let mut funded_challenge_tx = fund_raw_transaction(client, &tx, 1)?;
+    funded_challenge_tx.input[0].witness = tx.input[0].witness.clone();
+    tracing::info!(
+        tx = bitcoin::consensus::encode::serialize_hex(&funded_challenge_tx),
+        "Challenge is funded"
+    );
+    let signed_challenge_tx = sign_raw_transaction_with_wallet(client, &funded_challenge_tx)?;
+    tracing::info!(
+        txid = %signed_challenge_tx.compute_txid(),
+        tx = bitcoin::consensus::encode::serialize_hex(&signed_challenge_tx),
+        "Funded challenge is signed, sending..."
+    );
+
+    send_raw_transaciton(client, &signed_challenge_tx)?;
+    let assert_tx = operator.assert_tx();
+    let tx = assert_tx.to_tx(ctx);
+    tracing::info!(
+        tx = bitcoin::consensus::encode::serialize_hex(&tx),
+        "Sending assert tx"
+    );
+    send_raw_transaciton(client, &tx)?;
+    Ok(())
+}
+
 fn test_operator_payout<S: SplitableScript>() -> eyre::Result<()> {
     let TestSetup {
         operator,
@@ -234,52 +269,7 @@ fn test_operator_payout<S: SplitableScript>() -> eyre::Result<()> {
     } = setup_operator::<S>(false)?;
     let ctx = Secp256k1::new();
 
-    let claim_tx = operator.claim_tx();
-    let tx = claim_tx.to_tx(&ctx);
-    tracing::info!(
-        tx = bitcoin::consensus::encode::serialize_hex(&tx),
-        "Sending claim"
-    );
-    send_raw_transaciton(&client, &tx)?;
-    generate_to_address(&client, 1, wallet_addr.clone())?;
-
-    let challenge_tx = operator.challenge_tx();
-    let tx = challenge_tx.to_tx();
-    tracing::info!(
-        tx = bitcoin::consensus::encode::serialize_hex(&tx),
-        "Got challenge tx"
-    );
-    // Fund and sign challenge tx
-    let mut funded_challenge_tx = fund_raw_transaction(&client, &tx, 1)?;
-    // NOTE(Velnbur): for some reason `fundrawtransaction` removes
-    // witness from all inputs, that's why we add witness again from
-    // previous tx state.
-    //
-    // We always know that our input is the first one.
-    funded_challenge_tx.input[0].witness = tx.input[0].witness.clone();
-    tracing::info!(
-        tx = bitcoin::consensus::encode::serialize_hex(&funded_challenge_tx),
-        "Challenge is funded"
-    );
-    let signed_funded_challenge_tx =
-        sign_raw_transaction_with_wallet(&client, &funded_challenge_tx)?;
-    tracing::info!(
-        tx = bitcoin::consensus::encode::serialize_hex(&signed_funded_challenge_tx),
-        "Funded challenge is signed"
-    );
-    send_raw_transaciton(&client, &signed_funded_challenge_tx)?;
-    tracing::info!(
-        txid = signed_funded_challenge_tx.compute_txid().to_string(),
-        "Sending challenge tx"
-    );
-
-    let assert_tx = operator.assert_tx();
-    let tx = assert_tx.to_tx(&ctx);
-    tracing::info!(
-        tx = bitcoin::consensus::encode::serialize_hex(&tx),
-        "Sending assert tx"
-    );
-    send_raw_transaciton(&client, &tx)?;
+    setup_assert_scenario(&operator, &ctx, &client, &wallet_addr)?;
 
     generate_to_address(
         &client,
@@ -307,72 +297,32 @@ fn test_operator_disprove<S: SplitableScript>() -> eyre::Result<()> {
     } = setup_operator::<S>(true)?;
     let ctx = Secp256k1::new();
 
-    let claim_tx = operator.claim_tx();
-    let tx = claim_tx.to_tx(&ctx);
-    tracing::info!(
-        tx = bitcoin::consensus::encode::serialize_hex(&tx),
-        "Sending claim"
-    );
-    send_raw_transaciton(&client, &tx)?;
+    setup_assert_scenario(&operator, &ctx, &client, &wallet_addr)?;
+
     generate_to_address(&client, 1, wallet_addr.clone())?;
 
-    let challenge_tx = operator.challenge_tx();
-    let tx = challenge_tx.to_tx();
-    tracing::info!(
-        tx = bitcoin::consensus::encode::serialize_hex(&tx),
-        "Got challenge tx"
-    );
-    // Fund and sign challenge tx
-    let mut funded_challenge_tx = fund_raw_transaction(&client, &tx, 1)?;
-    // NOTE(Velnbur): for some reason `fundrawtransaction` removes
-    // witness from all inputs, that's why we add witness again from
-    // previous tx state.
-    //
-    // We always know that our input is the first one.
-    funded_challenge_tx.input[0].witness = tx.input[0].witness.clone();
-    tracing::info!(
-        tx = bitcoin::consensus::encode::serialize_hex(&funded_challenge_tx),
-        "Challenge is funded"
-    );
-    let signed_funded_challenge_tx =
-        sign_raw_transaction_with_wallet(&client, &funded_challenge_tx)?;
-    tracing::info!(
-        tx = bitcoin::consensus::encode::serialize_hex(&signed_funded_challenge_tx),
-        "Funded challenge is signed"
-    );
-    send_raw_transaciton(&client, &signed_funded_challenge_tx)?;
-    tracing::info!(
-        txid = signed_funded_challenge_tx.compute_txid().to_string(),
-        "Sending challenge tx"
-    );
-
-    let assert_tx = operator.assert_tx();
-    let tx = assert_tx.to_tx(&ctx);
-    tracing::info!(
-        tx = bitcoin::consensus::encode::serialize_hex(&tx),
-        "Sending assert tx"
-    );
-    send_raw_transaciton(&client, &tx)?;
-    generate_to_address(&client, 1, wallet_addr.clone())?;
-
-    let found_disprove = operator.disprove_txs().iter().enumerate().find_map(|(idx, disprove)| {
-        let tx = disprove.to_tx(&ctx);
-        tracing::info!(
-            ?idx,
-            tx = bitcoin::consensus::encode::serialize_hex(&tx),
-            "Sending disprove tx"
-        );
-        
-        if let Err(err) = send_raw_transaciton(&client, &tx) {
+    let found_disprove = operator
+        .disprove_txs()
+        .iter()
+        .enumerate()
+        .find_map(|(idx, disprove)| {
+            let tx = disprove.to_tx(&ctx);
             tracing::info!(
-                %err,
-                "Failed to spend disprove tx"
+                ?idx,
+                tx = bitcoin::consensus::encode::serialize_hex(&tx),
+                "Sending disprove tx"
             );
-            None
-        } else {
-            Some(disprove)
-        }
-    });
+
+            if let Err(err) = send_raw_transaciton(&client, &tx) {
+                tracing::info!(
+                    %err,
+                    "Failed to spend disprove tx"
+                );
+                None
+            } else {
+                Some(disprove)
+            }
+        });
 
     assert!(found_disprove.is_some());
     generate_to_address(&client, 1, wallet_addr)?;
@@ -382,8 +332,8 @@ fn test_operator_disprove<S: SplitableScript>() -> eyre::Result<()> {
 
 fn test_operator_generic<S: SplitableScript>() -> eyre::Result<()> {
     test_operator_payout::<S>()?;
-    // test_operator_optimistic_payout::<S>()?;
     test_operator_disprove::<S>()?;
+    test_operator_optimistic_payout::<S>()?;
 
     Ok(())
 }

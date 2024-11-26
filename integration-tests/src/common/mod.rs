@@ -174,8 +174,13 @@ pub(crate) fn fund_raw_transaction(
         // fuck, bitcoin, I don't know...
         let mut buff = Vec::new();
         tx.version.consensus_encode(&mut buff).unwrap();
+        // 0x00.consensus_encode(&mut buff).unwrap();
+        // 0x01.consensus_encode(&mut buff).unwrap();
         tx.input.consensus_encode(&mut buff).unwrap();
         tx.output.consensus_encode(&mut buff).unwrap();
+        // for input in &tx.input {
+        //     input.witness.consensus_encode(&mut buff).unwrap();
+        // }
         tx.lock_time.consensus_encode(&mut buff).unwrap();
         hex::encode(&buff)
     };
@@ -187,6 +192,7 @@ pub(crate) fn fund_raw_transaction(
     let params = to_raw_value(&[
         to_raw_value(&hextx).unwrap(),
         to_raw_value(&options).unwrap(),
+        // to_raw_value(&false).unwrap(),
     ])
     .unwrap();
 
@@ -215,10 +221,7 @@ pub(crate) fn sign_raw_transaction_with_wallet(
     let params = vec![to_raw_value(&hextx).unwrap()];
 
     let params = to_raw_value(&params).unwrap();
-    tracing::info!("{}", params);
     let value: serde_json::Value = client.call("signrawtransactionwithwallet", Some(&params))?;
-
-    tracing::info!("{:?}", value);
 
     let hextx = value
         .as_object()
