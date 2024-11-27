@@ -8,7 +8,6 @@ edition = "2021"
 bitcoin              = { workspace = true, features = ["rand-std"]}
 bitcoin-script       = { git = "https://github.com/BitVM/rust-bitcoin-script" }
 bitcoin-scriptexec   = { path = "../bitcoin-scriptexec" }
-bitcoin-script-stack = { git = "https://github.com/FairgateLabs/rust-bitcoin-script-stack"}
 
 # BitVM scripts
 bitcoin-window-mul.workspace = true
