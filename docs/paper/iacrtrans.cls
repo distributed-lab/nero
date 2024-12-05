@@ -646,5 +646,10 @@
 \RequirePackage[T1]{fontenc}
 \RequirePackage{lmodern}
 
+% Blocks style
+\RequirePackage[most]{tcolorbox}
+\tcolorboxenvironment{example}{breakable,boxrule=0pt,boxsep=0pt,colback={gray!3},left=8pt,right=8pt,enhanced jigsaw, borderline west={1.5pt}{0pt}{green!60!black},sharp corners,before skip=10pt,after skip=10pt}
+\tcolorboxenvironment{definition}{breakable,boxrule=0pt,boxsep=0pt,colback={gray!3},left=8pt,right=8pt,enhanced jigsaw, borderline west={1.5pt}{0pt}{blue},sharp corners,before skip=10pt,after skip=10pt}
+
 \endinput
 %end of file iacrtrans.cls

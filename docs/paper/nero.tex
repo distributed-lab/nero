@@ -11,7 +11,6 @@
 \usepackage{longtable}
 \usepackage{wrapfig}
 \usepackage{rotating}
-\usepackage{tcolorbox}
 \tcbuselibrary{skins}
 \usepackage{booktabs}
 % \usepackage{multirow}
@@ -66,12 +65,11 @@
 \DeclareMathOperator*{\argmax}{arg\,max}
 \DeclareMathOperator*{\argmin}{arg\,min}
 
-\author{Kyrylo Baibula \inst{1} \and Oleksandr Kurbatov\inst{1} \and
-Dmytro Zakharov\inst{1}}
+\author{Oleksandr Kurbatov\inst{1} \and Dmytro Zakharov\inst{1} 
+\and Kyrylo Baibula \inst{1}}
 \institute{Distributed Lab
-  \email{dmytro.zakharov@distributedlab.com},
-\email{ok@distributedlab.com}, \email{kyrylo.baybula@distributedlab.com}}
-\title[Verifiable Computation on Bitcoin]{$\mathcal{N}\mathfrak{e}\mathcal{R}O$: On Developing Generic Optimistic Verifiable Computation on Bitcoin. BitVM2 Practical Research}
+\email{ok@distributedlab.com}, \email{dmytro.zakharov@distributedlab.com}, \email{kyrylo.baybula@distributedlab.com}}
+\title[Verifiable Computation on Bitcoin]{$\mathcal{N}\mathfrak{e}\mathcal{R}O$: BitVM2-Based Generic Optimistic Verifiable Computation on Bitcoin}
 
 \hypersetup{
   pdfauthor={Distributed Lab},
@@ -89,8 +87,7 @@ Dmytro Zakharov\inst{1}}
 
 \maketitle
 
-\keywords[]{Bitcoin, Bitcoin Script, Verifiable Computation,
-Optimistic Verification, BitVM2}
+\keywords[]{Bitcoin, Bitcoin Script, BitVM2, Verifiable Computation, Optimistic Verification, L2 Layer, Zero-Knowledge Proofs}
 
 \begin{abstract}
   One of Bitcoin's biggest unresolved challenges is the ability to execute a
@@ -101,11 +98,12 @@ Optimistic Verification, BitVM2}
   narrow down the problem to the verifiable computation which is more feasible
   given the current state of Bitcoin.
 
-  One of the ways to do it is the BitVM2 protocol. Based on it, we are aiming to
+  One of the ways to do it is the \textit{BitVM2} protocol. Based on it, we are aiming to
   create a generic library for the on-chain verifiable computations. This
-  document is designated to state our progress, pitfalls, and pain\ldots While
-  most of the current efforts are put into transferring the \textit{Groth16}
-  verifier on-chain with the main focus on implementing bridge, we try to solve
+  document is designated to state our progress, pitfalls, and challenges
+  encountered during the development. While most of the current efforts are put into 
+  transferring the \textit{Groth16} verifier on-chain with the 
+  main focus on implementing bridge, we try to solve
   a broader problem, enabling a more significant number of potential use cases
   (including zero-knowledge proofs verification).
 \end{abstract}
@@ -125,7 +123,7 @@ Bitcoin Script, the native programming language of Bitcoin, imposes strict size
 limits on transactions --- only 4 MB are allowed, making it challenging to
 implement any advanced cryptographic (and not only) primitives, among which
 highly desirable zero-knowledge proofs verification on-chain. To address this
-limitation, the BitVM2 \autocite{bitvm2} proposal introduces an innovative
+limitation, the \textit{BitVM2} \autocite{bitvm2} proposal introduces an innovative
 approach that enables the optimistic execution of large programs on the Bitcoin
 chain. 
 
@@ -137,7 +135,7 @@ and it can be proven \textit{concisely} due to the splitting mechanism.
 
 This document provides a concise overview of our progress in implementing the
 library for generic, optimistic, verifiable computation on Bitcoin. Currently,
-we are focusing on reproducing the BitVM2 paper approach while not limiting the
+we are focusing on reproducing the \textit{BitVM2} paper approach while not limiting the
 function and input/output format as much as possible.
 
 \section{Program Split}\label{sec:program-splitting}
@@ -160,15 +158,16 @@ Bitcoin Script, and the input $x$ is the data provided by the operator.
 
 Now, we define the \textit{public verifiable computation scheme} as follows:
 \begin{definition}
-  A public verifiable computation (VC) scheme $\Pi_{\text{VC}}$ consists of three probabilistic polynomial-time algorithms:
+  A public verifiable computation (VC) scheme $\Pi_{\text{VC}}$ 
+  consists of three probabilistic polynomial-time algorithms:
   \begin{itemize}
-    \item $\textsc{Gen}(f,1^{\lambda})$: a randomized algorithm, taking the
+    \item $\textsc{Gen}(f,1^{\lambda})$: randomized algorithm, taking the
     security parameter $\lambda \in \mathbb{N}$ and the function $f$ as input,
     and outputting the prover and verifier parameters $\mathsf{pp}$ and
     $\mathsf{vp}$.
-    \item $\textsc{Compute}(\mathsf{pp}, x)$: a deterministic algorithm, taking
-    the prover parameters $\mathsf{pp}$ and the input $x$, and outputting the
-    output $y$ together with a ``proof of computation'' $\pi$.
+    \item $\textsc{Compute}(\mathsf{pp}, x)$: deterministic algorithm, taking
+    the prover parameters $\mathsf{pp}$ and the input $x$, and outputting $y=f(x)$ 
+    together with a ``proof of computation'' $\pi$.
     \item $\textsc{Verify}(\mathsf{vp}, x, y, \pi)$: given the verifier
     parameters $\mathsf{vp}$, the input $x$, the output $y$, and the proof
     $\pi$, the algorithm outputs $\mathsf{accept}$ or $\mathsf{reject}$ based on
@@ -184,7 +183,7 @@ Now, we define the \textit{public verifiable computation scheme} as follows:
         (y,\pi) \gets \mathsf{Compute}(\mathsf{pp},x)
       \end{matrix}\right] = 1
     \end{equation*}
-    \item \textbf{Security}. For any function $f$ and any probabilistic
+    \item \textbf{Security}. For any $f$ and any probabilistic
     polynomial-time adversary $\mathcal{A}$, 
     \begin{equation*}
       \text{Pr}\left[\mathsf{Verify}(\mathsf{vp}, \widetilde{x}, \widetilde{y}, \widetilde{\pi}) = \mathsf{accept}\; \Big| \; \begin{matrix}
@@ -193,7 +192,8 @@ Now, we define the \textit{public verifiable computation scheme} as follows:
       \end{matrix}\right] \leq \mathsf{negl}(\lambda)
     \end{equation*}
     \item \textbf{Efficiency}. $\mathsf{Verify}$ should be much cheaper than the
-    evaluation of $f$.
+    evaluation of $f$. For example, if the evaluation of $f$ takes $T_f$,
+    then the verification could take $T_{\mathcal{V}} = \mathcal{O}(\log T_f)$.
   \end{itemize}
 \end{definition}
 
@@ -202,23 +202,23 @@ Suppose we have a large program $f$ implemented inside the Bitcoin Script and
 want to verify its execution on-chain. Suppose the prover $\mathcal{P}$ claims
 that ${y} = f({x})$ for published ${x}$ and ${y}$. Some of the examples include:
 \begin{itemize}
-    \item \textbf{Field multiplication}: $f(a,b) = a \times b$ for $a,b \in
+    \item \textbf{Field Multiplication}: $f(a,b) = a \times b$ for $a,b \in
     \mathbb{F}_p$. Here, the input ${x}=(a,b) \in \mathbb{F}_p^2$ is a tuple of
     two field elements, while the output $y \in \mathbb{F}_p$ is a single field
     element.
-    \item \textbf{EC points addition}: $f(x_1,y_1,x_2,y_2) = (x_1,y_1) \oplus
+    \item \textbf{EC Points Addition}: $f(x_1,y_1,x_2,y_2) = (x_1,y_1) \oplus
     (x_2,y_2) = (x_3,y_3)$. Input is a tuple $(x_1,y_1,x_2,y_2)$ of four field
     elements, representing the coordinates of two elliptic curve points. The
     output is a point $(x_3,y_3)$, represented by two field elements
     $\mathbb{F}_p$.
-    \item \textbf{Groth16 verifier}: $f(\pi_1,\pi_2,\pi_3) = b$ for $b \in
+    \item \textbf{Groth16 Verifier}: $f(\pi_1,\pi_2,\pi_3) = b$ for $b \in
     \{\mathsf{accept}, \mathsf{reject}\}$. Based on three provided points
     $\pi_1$,$\pi_2$,$\pi_3$, representing the proof, decide whether the proof is
     valid.
 \end{itemize}
 
 As mentioned before, publishing $f$ entirely on-chain is not an option. Instead,
-the BitVM2 paper suggests splitting the program into shards $f_1,\dots,f_n$ such
+the \textit{BitVM2} paper suggests splitting the program into shards (subprograms) $f_1,\dots,f_n$ such
 that $f=f_n \circ f_{n-1} \circ \dots \circ f_1$, where $\circ$ denotes the
 function composition. This way, both the prover $\mathcal{P}$ and verifier
 $\mathcal{V}$ can calculate all intermediate results as follows:
@@ -228,16 +228,17 @@ $\mathcal{V}$ can calculate all intermediate results as follows:
 
 Of course, we additionally set ${z}_0 := {x}$. If everything was computed
 correctly and the function was split into shards correctly, eventually, we will
-have ${z}_n = {y}$.  
+have ${z}_n = {y}$. We will give a practical example of this in the further
+sections.
 
-So recall that $\mathcal{P}$ (referred to in BitVM2 as the \textit{operator})
+So recall that $\mathcal{P}$ (referred to in \textit{BitVM2} as the \textit{operator})
 only needs to prove that the given program $f$ indeed returns ${y}$ for \({x}\),
 otherwise \textbf{anyone can disprove this fact}. In our case, this means giving
 challengers (essentially, being verifiers $\mathcal{V}$) the ability to prove
 that at least one of the sub-program statements \(f_j({z}_{j-1}) = {z}_j\) is
 false.
 
-So overall, the idea of BitVM2 can be described as follows:
+So overall, the idea of \textit{BitVM2} can be described as follows:
 \begin{enumerate}
     \item The program $f$ is decomposed into shards $f_1,\dots,f_n$ of
     reasonable size\footnote{By ``size'' we mean the number of
@@ -281,6 +282,40 @@ Decompose $f$ into shards: $(f_1,\dots,f_n) \gets \mathsf{Decompose}(f)$;
 \Return{$z_1,\dots,z_n$}
 \label{alg:intermediate_steps}
 \end{algorithm}
+
+\begin{example}
+  Consider a fairly simple program $f$:
+  \begin{equation*}
+      f(a,b) = 25a^2b^2(a+b)^2
+  \end{equation*}
+
+  Additionally, assume that we can abstract the multiplication operation 
+  via the opcode \texttt{OP\_MUL} (which, in fact, is already natively 
+  implemented in Bitcoin Script, although the size of such script 
+  for two 254-bit numbers exceeds 60kB). 
+  Then, the implementation of $f$ in Bitcoin Script could be:
+  \begin{empheqboxed}
+    \begin{align*}
+        &\elem{a} \elem{b} \opcode{\texttt{OP\_2DUP}} \opcode{\texttt{OP\_ADD}} \opcode{\texttt{OP\_MUL}} \opcode{\texttt{OP\_MUL}} 
+        \opcode{\texttt{OP\_DUP}} \opcode{\texttt{OP\_DUP}} \\& \opcode{\texttt{OP\_ADD}} \opcode{\texttt{OP\_DUP}} \opcode{\texttt{OP\_ADD}} \opcode{\texttt{OP\_ADD}} \opcode{\texttt{OP\_DUP}} \opcode{\texttt{OP\_MUL}}
+    \end{align*}
+  \end{empheqboxed}
+
+  Fairly complex, right? Let us split the function into three shards $\textcolor{red!80!white}{f_1}$, $\textcolor{blue}{f_2}$, and $\textcolor{green!60!black}{f_3}$:
+  \begin{align*}
+      \textcolor{red!80!white}{f_1}(x,y) = xy(x+y), \quad \textcolor{blue}{f_2}(z) = 5z, \quad \textcolor{green!60!black}{f_3}(w) = w^2
+  \end{align*}
+
+  This way, it is fairly easy to see that $f(a,b) = \textcolor{green!60!black}{f_3} \circ \textcolor{blue}{f_2} \circ \textcolor{red!80!white}{f_1}(a,b)$. In turn, in Bitcoin
+  script we can represent $f$ as $\textcolor{red!80!white}{f_1} \parallel \textcolor{blue}{f_2} \parallel \textcolor{green!60!black}{f_3}$:
+  \begin{empheqboxed}
+    \begin{align*}
+        &\elem{a} \elem{b} \textcolor{red!80!white}{\opcode{\texttt{OP\_2DUP}} \opcode{\texttt{OP\_ADD}} \opcode{\texttt{OP\_MUL}} \opcode{\texttt{OP\_MUL}}} && \textcolor{gray!80!black}{\text{// $xy(x+y)$}} \\
+        &\textcolor{blue}{\opcode{\texttt{OP\_DUP}} \opcode{\texttt{OP\_DUP}} \opcode{\texttt{OP\_ADD}} \opcode{\texttt{OP\_DUP}} \opcode{\texttt{OP\_ADD}} \opcode{\texttt{OP\_ADD}}} && \textcolor{gray!80!black}{\text{// $5z$}} \\
+        &\textcolor{green!60!black}{\opcode{\texttt{OP\_DUP}} \opcode{\texttt{OP\_MUL}}}&&\textcolor{gray!80!black}{\text{// $w^2$}}
+    \end{align*}
+  \end{empheqboxed}
+\end{example}
 
 Bad news is that $\mathsf{Decompose}$ function is quite tricky to implement.
 Namely, we believe that there are several issues:
@@ -479,7 +514,7 @@ implementation can be found here:
 
 The first biggest issue with the provided approach is that the Winternitz Script
 requires encoding the message $\mathsf{Enc}(m)$, which splits the state into $d$
-digit number. For BitVM2, it means encoding each state $z_j$. However, the
+digit number. For \textit{BitVM2}, it means encoding each state $z_j$. However, the
 arithmetic in Bitcoin Script is limited and contains only basic opcodes such as
 \texttt{OP\_ADD}. To make matters worse, all the corresponding operations can be
 applied to 32-bit elements only, and as the last one is reserved for a sign,
@@ -595,26 +630,20 @@ provided, the current implementation requires around 1000 bytes per
 32-bit stack element, which is unfortunatly a lot. Parts of the public
 key make the largest contribution to the script size. Assuming that as
 $H$ implementation uses \texttt{OP\_HASH160}, each part
-$(y_1,\dots,y_N)$ of the public key $\mathsf{pk}_{m}$ adds 20 bytes to
+$(y_1,\dots,y_N)$ of the public key $\mathsf{pk}_{m}$ adds $n_H := 20$ bytes to
 the total script size. Additionaly, for calculating a lookup table for
 signature verification, $2d \times N$ opcodes are used. Furthermore, for
 message recovery, $2\sum_{i = 0}^{n_0} i w$ opcodes are added too. Also,
 note that $2 \sum_{i = 0}^{n_0} i w = w n_0 (n_0+1) \approx w n_0^2$, so the
 total script size, excluding utility opcodes, will be at least roughly
-$20N + 2 dN + w n_0^2$.
+$n_HN + 2 dN + w n_0^2$.
 
 For script's input stack elements, the size of encoding
 $\mathsf{Enc}(z_j)$ and corresponding signature $\sigma_j$, as each limb
-can be stored only as a whole byte, is around $N + 20N = 21N$
+can be stored only as a whole byte, is around $N + n_HN = (1+n_H)N$
 bytes. So the total size of the largest part of a disprove transaction
---- \texttt{witness}, is:
-
-\begin{equation*}\label{eq:contrbution-script-size}
-  (41 + 2 d) \cdot N + w (n_0 + 1)n_0
-\end{equation*}
-
-The sizes for different $d$ can be seen in
-\Cref{tab:winternitz-script-size}.
+--- \texttt{witness}, is roughly $2N(n_H + d) + wn_0^2$. The specific sizes 
+for different $d$ can be seen in \Cref{tab:winternitz-script-size}.
 
 \iffalse{}
 %The python script i used for this table:
@@ -668,18 +697,15 @@ As we mentioned in prevoius section, the most contribution to script
 size comes from public key, signature, verification and recovery, but
 do we actually need to sign each integer limb?
 
-Let's check the checksum of winternitz singature described
-in~\cite{applied-crypto}:
-
-\begin{equation}
-  c \gets d n_0 - (e_1 + \ldots + e_{n_0})
-\end{equation}\label{eq:winternitz-checksum}
-
-Suppose, at some point during the protocol execution with $d=15$, the last limb of the message encoding $\mathsf{Enc}(m)$ turns out to be $e_{7} = 0$. According to \eqref{eq:winternitz-checksum}, the value of
-$e_{7}$ does not contribute to the sum of the checksum, so, without any security concerns, can be omitted. But to keep the right value
-after a recover, we can't remove all zero limbs. That's why
-instead, we propose \textit{skipping} only the most significant \textit{zero} limbs
-of a stack element.
+Recall that the checksum of the Winternitz singature described
+in~\cite{applied-crypto} is $c = d n_0 - \sum_{i=1}^{n_0}e_i$. Suppose, at some
+point during the protocol execution with $d=15$, the last limb of the message
+encoding $\mathsf{Enc}(m)$ turns out to be $e_{7} = 0$. According to
+checksum expression, the value of $e_{7}$ does not contribute to the
+sum of the checksum, so, without any security concerns, can be omitted. But to
+keep the right value after a recover, we can't remove all zero limbs. That's why
+instead, we propose \textit{skipping} only the most significant \textit{zero}
+limbs of a stack element.
 
 This makes the recovery script size equal to zero in the best-case scenario. The public key and signature hash digest number ranges from $1 + n_1$ in the best case to $N$ in the worst. The same applies to the total verification script size, as fewer checks are required for smaller public keys.
 
@@ -758,7 +784,7 @@ Address}\label{sec:mast-tree-structure}
 
 The inputs of the \texttt{Assert} transaction spend the output to a Taproot
 address, which consists of a MAST tree of Bitcoin scripts mentioned in
-\Cref{sec:assert-tx}. From the BitVM2 document, it is known that the first \(n\)
+\Cref{sec:assert-tx}. From the \textit{BitVM2} document, it is known that the first \(n\)
 scripts in the tree are all \(\texttt{DisproveScript[\text{$i$}]}\), where \(i
 \in \{1,\dots, n\}\), and the last is a script that allows the operator who
 published the \texttt{Assert} transaction to spend the output after some time. A
@@ -808,13 +834,13 @@ visualization of this tree can be seen in the \Cref{fig:assert-tx-mast-tree}.
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=.9\linewidth]{../images/bitvm-txs.png}
-  \caption{\label{fig:bitvm-txs}Sequance of transactions in BitVM2
+  \caption{\label{fig:bitvm-txs}Sequance of transactions in \textit{BitVM2}
   with 3 subprograms and 2 intermediate states.}
 \end{figure}
 
 \section{Exploring BitVM2 Potential using Toy Examples}\label{sec:covenants-emulation}
 
-Finally, in this section, we explore the potential of BitVM2 using some toy
+Finally, in this section, we explore the potential of \textit{BitVM2} using some toy
 examples. We will consider the following functions:
 \begin{itemize}
   \item \textbf{\texttt{u32} Multiplication} --- a function that
@@ -823,10 +849,10 @@ examples. We will consider the following functions:
     calculates the $n$-th element of the square Fibonacci sequence.
 \end{itemize}
 
-We will demonstrate that the current implementation of BitVM2 and current
+We will demonstrate that the current implementation of \textit{BitVM2} and current
 approach to writing Mathematics (finite field arithmetic, elliptic curve
 operations etc.) cannot handle even the first example. Based on the second
-example, we will show that with the appropriate ideology, the BitVM2 can still
+example, we will show that with the appropriate ideology, the \textit{BitVM2} can still
 be used to verify the execution of complex programs, but written in a different
 way. We call such functions as \textbf{BitVM-friendly functions}.
 \subsection{u32 Multiplication}
@@ -916,9 +942,9 @@ leads us to the essential conclusion.
 
 \textbf{Takeaway.} \textit{Optimizing the intermediate states representation is crucial for the BitVM2. Even if the program is split into small chunks, the cost of the commitment can still be overwhelming.}
 
-This leads us to the question: can we throw BitVM2 out of the window due to such
+This leads us to the question: can we throw \textit{BitVM2} out of the window due to such
 inefficiency and wait for the \texttt{OP\_CAT}? The answer is obviously no (for
-what other reason are we writing this paper?). We can still use BitVM2, but we
+what other reason are we writing this paper?). We can still use \textit{BitVM2}, but we
 need to change the way we write the programs. We call such programs
 \textbf{BitVM-friendly functions}. We provide the first example below.
 
@@ -977,7 +1003,7 @@ the program into}.
 
 \section{Takeaways and Future Directions}
 
-All in all, we believe that, currently, in order to make BitVM2 practical, the
+All in all, we believe that, currently, in order to make \textit{BitVM2} practical, the
 whole Groth16 verifier should be written in the \textbf{BitVM-friendly} format.
 We give an informal definition below.
 
