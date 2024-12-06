@@ -1,5 +1,5 @@
 [package]
-name    = "bitvm2-core"
+name    = "nero-core"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,7 +8,6 @@ edition = "2021"
 bitcoin              = { workspace = true, features = ["rand-std"]}
 bitcoin-script       = { git = "https://github.com/BitVM/rust-bitcoin-script" }
 bitcoin-scriptexec   = { path = "../bitcoin-scriptexec" }
-bitcoin-script-stack = { git = "https://github.com/FairgateLabs/rust-bitcoin-script-stack"}
 
 # BitVM scripts
 bitcoin-window-mul.workspace = true
@@ -38,4 +37,6 @@ ark-std     = "0.4.0"
 konst       = "0.3.9"
 once_cell = "1.19.0"
 eyre = "0.6.12"
+itertools = "0.13.0"
+musig2 =  { version = "0.0.11", features = ["rand"] }
 
