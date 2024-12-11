@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dev-dependencies]
-bitcoincore-rpc = "0.17.0"
+jsonrpc = "0.18.0" 
 bitcoin = { workspace = true, features = [ "std", "serde" ] }
 color-eyre = "0.6.3"
 eyre = "0.6.12"
@@ -16,6 +16,6 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 hex = "0.4.3"
 
-bitvm2-core.path = "../core"
+nero-core.path = "../nero-core"
 bitcoin-splitter.path = "../bitcoin-splitter"
 bitcoin-testscripts.path = "../bitcoin-testscripts"

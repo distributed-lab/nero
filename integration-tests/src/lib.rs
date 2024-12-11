@@ -5,4 +5,4 @@ mod common;
 mod fetch_balance;
 
 #[cfg(test)]
-mod taproot;
+mod operator;

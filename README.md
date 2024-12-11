@@ -88,7 +88,7 @@ Compile `nero-cli`:
 ```shell
 cargo install --path ./nero-cli
 ```
-
+	
 Generate random pair of keys for payout path spending:
 
 ```shell

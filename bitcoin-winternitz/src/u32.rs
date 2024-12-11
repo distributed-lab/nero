@@ -27,7 +27,7 @@ pub const N: usize = N0 + N1;
 
 /// Secret key is array of $N$ chunks by $D$ bits, where the whole number
 /// of bits is equal to $v$.
-#[derive(Clone, Debug, Copy)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct SecretKey([Hash160; N]);
 
 impl SecretKey {
@@ -94,7 +94,7 @@ impl SecretKey {
 
 /// Public key is a hashed $D$ times each of the $n$ parts of the
 /// [`SecretKey`].
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct PublicKey([Hash160; N]);
 
 impl PublicKey {
@@ -121,9 +121,15 @@ impl PublicKey {
         let skip = msg.count_zero_limbs_from_left();
         checksig_verify_script_compact(skip, self)
     }
+
+    /// Construct `script_pubkey` signature verification which uses
+    /// full encoding.
+    pub fn checksig_verify_script(&self) -> Script {
+        checksig_verify_script(self)
+    }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Default, Copy)]
 pub struct Message([u8; N]);
 
 impl Message {
@@ -243,7 +249,7 @@ impl Message {
 }
 
 /// Winternitz signature. The array of intermidiate hashes of secret key.
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct Signature {
     sig: [Hash160; N],
     msg: Message,
@@ -254,6 +260,38 @@ impl Signature {
     /// number of times it was hashed.
     pub fn to_script_sig(self) -> Script {
         self.to_script_sig_skipping(0)
+    }
+
+    /// The same as [`Signature::to_script_sig`], but converts signature to
+    /// witness stack elements instead of script.
+    pub fn to_witness_stack_elements(self) -> Vec<Vec<u8>> {
+        self.to_witness_stack_elements_skipping(0)
+    }
+
+    fn to_witness_stack_elements_skipping(self, skipping: usize) -> Vec<Vec<u8>> {
+        let mut elements = Vec::new();
+
+        // TODO(Velnbur): later let's move it somewhere else
+        fn push_element(idx: usize, elements: &mut Vec<Vec<u8>>, sig: &Signature) {
+            elements.push(sig.sig[idx].to_byte_array().to_vec());
+            let msg_byte = sig.msg.0[idx];
+            if msg_byte == 0 {
+                elements.push(Vec::new());
+            } else {
+                elements.push(msg_byte.to_le_bytes().to_vec());
+            }
+        }
+
+        // Keep all the elements of the checksum.
+        for idx in (N0..(N0 + N1)).rev() {
+            push_element(idx, &mut elements, &self);
+        }
+        // Push the stack element limbs skipping some of them.
+        for idx in (0..N0).rev().skip(skipping) {
+            push_element(idx, &mut elements, &self);
+        }
+
+        elements
     }
 
     /// The same as [`Self::to_script_sig`], but skips `skipping` number of
